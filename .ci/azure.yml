@@ -1,0 +1,74 @@
+# Azure Pipeline YAML file
+
+name: 1.2.1$(Rev:.r)
+
+trigger:
+  branches:
+    include:
+    - master
+  tags:
+    include:
+    - '*'
+
+variables:
+  _IS_BUILD_CANARY: false
+  _RELEASE_NAME: openpsf
+  _RELEASE_VERSION: v0
+  _RELEASE_CONFIGURATION: Release
+  _BUILD_VERSION: $(Build.BuildNumber)
+  _BUILD_BRANCH: $(Build.SourceBranch)
+  _MSVC_RUNTIME: MultiThreaded
+
+pool:
+  vmImage: 'windows-latest'
+
+resources:
+  repositories:
+  - repository: highly_experimental
+    type: github
+    endpoint: github_ci
+    name: myst6re/highly_experimental
+  - repository: psflib
+    type: github
+    endpoint: github_ci
+    name: myst6re/psflib
+
+steps:
+- checkout: self
+- checkout: highly_experimental
+- checkout: psflib
+- task: PowerShell@2
+  displayName: 'Build and Package $(_RELEASE_NAME)'
+  inputs:
+    filePath: $(Build.Repository.LocalPath)\openpsf\.ci\build.ps1
+  env:
+    buildPath: $(Build.Repository.LocalPath)
+- task: GitHubRelease@0
+  condition: and(eq(variables._IS_BUILD_CANARY, 'true'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Delete $(_RELEASE_NAME) Release (Canary)'
+  continueOnError: true
+  inputs:
+    gitHubConnection: github_ci
+    action: delete
+    tagSource: manual
+    tag: canary
+- task: GitHubRelease@0
+  condition: and(eq(variables._IS_BUILD_CANARY, 'true'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Create $(_RELEASE_NAME) Release (Canary)'
+  inputs:
+    gitHubConnection: github_ci
+    assets: $(Build.Repository.LocalPath)\.dist\*.zip
+    isPreRelease: true
+    tagSource: manual
+    tag: canary
+    title: $(_RELEASE_NAME)-$(_RELEASE_VERSION)
+    releaseNotesSource: input
+    releaseNotes: |
+      This is a canary build. Please be aware it may be prone to crashing and is NOT tested by anyone. Use this build AT YOUR OWN RISK!
+- task: GitHubRelease@0
+  condition: and(eq(variables._IS_BUILD_CANARY, 'false'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Create $(_RELEASE_NAME) Release (Stable)'
+  inputs:
+    gitHubConnection: github_ci
+    assets: $(Build.Repository.LocalPath)\.dist\*.zip
+    title: $(_RELEASE_NAME)-$(_RELEASE_VERSION)
