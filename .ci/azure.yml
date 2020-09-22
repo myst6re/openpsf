@@ -1,7 +1,5 @@
 # Azure Pipeline YAML file
 
-name: 1.2.1$(Rev:.r)
-
 trigger:
   branches:
     include:
@@ -11,41 +9,87 @@ trigger:
     - '*'
 
 variables:
-  _IS_BUILD_CANARY: false
-  _RELEASE_NAME: openpsf
-  _RELEASE_VERSION: v0
-  _RELEASE_CONFIGURATION: Release
-  _BUILD_VERSION: $(Build.BuildNumber)
+  BuildPlatform: x86
+  BuildConfiguration: Release
   _BUILD_BRANCH: $(Build.SourceBranch)
-  _MSVC_RUNTIME: MultiThreaded
 
 pool:
-  vmImage: 'windows-latest'
+  vmImage: 'windows-2019'
 
 resources:
   repositories:
   - repository: highly_experimental
     type: github
-    endpoint: github_ci
+    endpoint: myst6re
     name: myst6re/highly_experimental
   - repository: psflib
     type: github
-    endpoint: github_ci
+    endpoint: myst6re
     name: myst6re/psflib
+  - repository: zlib
+    type: github
+    endpoint: myst6re
+    name: madler/zlib
 
 steps:
 - checkout: self
 - checkout: highly_experimental
 - checkout: psflib
-- task: PowerShell@2
-  displayName: 'Build and Package $(_RELEASE_NAME)'
+- checkout: zlib
+- task: CopyFiles@2
   inputs:
-    filePath: $(Build.Repository.LocalPath)\openpsf\.ci\build.ps1
-  env:
-    buildPath: $(Build.Repository.LocalPath)
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\.ci'
+    contents: 'zlib.vcxproj'
+    targetFolder: '$(Build.Repository.LocalPath)\zlib'
+    cleanTargetFolder: false
+- task: VSBuild@1
+  displayName: 'Build and Package $(Build.Repository.Name)'
+  inputs:
+    solution: $(Build.Repository.LocalPath)\openpsf\openpsf.sln
+    vsVersion: '16.0'
+    platform: '$(BuildPlatform)'
+    configuration: '$(BuildConfiguration)'
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\$(BuildConfiguration)'
+    contents: '*.lib'
+    targetFolder: '$(Build.Repository.LocalPath)\output\lib'
+    cleanTargetFolder: true
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf'
+    contents: '*.h'
+    targetFolder: '$(Build.Repository.LocalPath)\output\include'
+    cleanTargetFolder: true
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\psflib'
+    contents: '*.h'
+    targetFolder: '$(Build.Repository.LocalPath)\output\include'
+    cleanTargetFolder: false
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\highly_experimental\Core'
+    contents: '*.h'
+    targetFolder: '$(Build.Repository.LocalPath)\output\include'
+    cleanTargetFolder: false
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.Repository.LocalPath)\output'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)\openpsf-$(Build.SourceBranchName).$(Build.BuildId)_$(BuildConfiguration)_$(BuildPlatform).zip'
+    replaceExistingArchive: true
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.Repository.LocalPath)\output'
+    includeRootFolder: false
+    archiveType: 'zip'
+    archiveFile: '$(Build.ArtifactStagingDirectory)\openpsf-$(Build.SourceBranchName)_$(BuildConfiguration)_$(BuildPlatform).zip'
+    replaceExistingArchive: true
 - task: GitHubRelease@0
-  condition: and(eq(variables._IS_BUILD_CANARY, 'true'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
-  displayName: 'Delete $(_RELEASE_NAME) Release (Canary)'
+  condition: and(or(eq(variables._BUILD_BRANCH, 'refs/heads/master'), eq(variables._BUILD_BRANCH, 'refs/tags/canary')), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Delete $(Build.Repository.Name) Release (Canary)'
   continueOnError: true
   inputs:
     gitHubConnection: github_ci
@@ -53,22 +97,22 @@ steps:
     tagSource: manual
     tag: canary
 - task: GitHubRelease@0
-  condition: and(eq(variables._IS_BUILD_CANARY, 'true'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
-  displayName: 'Create $(_RELEASE_NAME) Release (Canary)'
+  condition: and(or(eq(variables._BUILD_BRANCH, 'refs/heads/master'), eq(variables._BUILD_BRANCH, 'refs/tags/canary')), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Create $(Build.Repository.Name) Release (Canary)'
   inputs:
     gitHubConnection: github_ci
-    assets: $(Build.Repository.LocalPath)\.dist\*.zip
+    assets: '$(Build.ArtifactStagingDirectory)\openpsf-$(Build.SourceBranchName).$(Build.BuildId)_$(BuildConfiguration)_$(BuildPlatform).zip'
     isPreRelease: true
     tagSource: manual
     tag: canary
-    title: $(_RELEASE_NAME)-$(_RELEASE_VERSION)
+    title: openpsf-$(Build.SourceBranchName)
     releaseNotesSource: input
     releaseNotes: |
       This is a canary build. Please be aware it may be prone to crashing and is NOT tested by anyone. Use this build AT YOUR OWN RISK!
 - task: GitHubRelease@0
-  condition: and(eq(variables._IS_BUILD_CANARY, 'false'), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
-  displayName: 'Create $(_RELEASE_NAME) Release (Stable)'
+  condition: and(not(or(eq(variables._BUILD_BRANCH, 'refs/heads/master'), eq(variables._BUILD_BRANCH, 'refs/tags/canary'))), not(contains(variables._BUILD_BRANCH, 'refs/pull/')))
+  displayName: 'Create $(Build.Repository.Name) Release (Stable)'
   inputs:
     gitHubConnection: github_ci
-    assets: $(Build.Repository.LocalPath)\.dist\*.zip
-    title: $(_RELEASE_NAME)-$(_RELEASE_VERSION)
+    assets: '$(Build.ArtifactStagingDirectory)\openpsf-$(Build.SourceBranchName)_$(BuildConfiguration)_$(BuildPlatform).zip'
+    title: openpsf-$(Build.SourceBranchName)
