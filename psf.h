@@ -8,11 +8,11 @@
 #include "../psfemucore/r3000.h"
 #include "../psfemucore/spu.h"
 #else
-#include "../ESP/PSX/Core/psx.h"
-#include "../ESP/PSX/Core/iop.h"
-#include "../ESP/PSX/Core/r3000.h"
-#include "../ESP/PSX/Core/spu.h"
-#include "../ESP/PSX/Core/bios.h"
+#include "../highly_experimental/Core/psx.h"
+#include "../highly_experimental/Core/iop.h"
+#include "../highly_experimental/Core/r3000.h"
+#include "../highly_experimental/Core/spu.h"
+#include "../highly_experimental/Core/bios.h"
 #endif
 
 #include <psflib.h>

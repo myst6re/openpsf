@@ -155,7 +155,7 @@
     <ClInclude Include="PSXFilter.h" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\ESP\PSX\Core\PSXCore.vcxproj">
+    <ProjectReference Include="..\highly_experimental\Core\PSXCore.vcxproj">
       <Project>{d578378a-a579-461a-a4e8-ba2c548b12a7}</Project>
     </ProjectReference>
     <ProjectReference Include="..\psflib\psflib.vcxproj">
