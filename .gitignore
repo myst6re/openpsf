@@ -1,4 +1,4 @@
 *.user
-Debug
-Release
+Debug*
+Release*
 .vs

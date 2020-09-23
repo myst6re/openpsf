@@ -52,25 +52,31 @@ steps:
 - task: CopyFiles@2
   inputs:
     sourceFolder: '$(Build.Repository.LocalPath)\openpsf\$(BuildConfiguration)'
-    contents: '*.lib'
+    contents: 'psflib.lib'
     targetFolder: '$(Build.Repository.LocalPath)\output\lib'
     cleanTargetFolder: true
 - task: CopyFiles@2
   inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\$(BuildConfiguration)'
+    contents: 'PSXCore.lib'
+    targetFolder: '$(Build.Repository.LocalPath)\output\lib'
+    cleanTargetFolder: false
+- task: CopyFiles@2
+  inputs:
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\$(BuildConfiguration)'
+    contents: 'openpsf.lib'
+    targetFolder: '$(Build.Repository.LocalPath)\output\lib'
+    cleanTargetFolder: false
+- task: CopyFiles@2
+  inputs:
     sourceFolder: '$(Build.Repository.LocalPath)\openpsf'
     contents: '*.h'
-    targetFolder: '$(Build.Repository.LocalPath)\output\include'
+    targetFolder: '$(Build.Repository.LocalPath)\output\include\libopenpsf'
     cleanTargetFolder: true
 - task: CopyFiles@2
   inputs:
     sourceFolder: '$(Build.Repository.LocalPath)\psflib'
-    contents: '*.h'
-    targetFolder: '$(Build.Repository.LocalPath)\output\include'
-    cleanTargetFolder: false
-- task: CopyFiles@2
-  inputs:
-    sourceFolder: '$(Build.Repository.LocalPath)\highly_experimental\Core'
-    contents: '*.h'
+    contents: 'psflib.h'
     targetFolder: '$(Build.Repository.LocalPath)\output\include'
     cleanTargetFolder: false
 - task: ArchiveFiles@2
