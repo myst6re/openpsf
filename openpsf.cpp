@@ -3,7 +3,8 @@
 /****************************************************************************/
 #include "openpsf.h"
 
-#define BORK_TIME 0xC0CAC01A
+constexpr auto BORK_TIME = 0xC0CAC01A;
+constexpr auto PSF_CHANNEL_COUNT = 2;
 
 #include "../highly_experimental/Core/psx.h"
 #include "../highly_experimental/Core/iop.h"
@@ -13,7 +14,7 @@
 
 #include <psf2fs.h>
 
-typedef struct {
+struct exec_header_t {
 	uint32_t pc0;
 	uint32_t gp0;
 	uint32_t t_addr;
@@ -25,18 +26,17 @@ typedef struct {
 	uint32_t s_ptr;
 	uint32_t s_size;
 	uint32_t sp, fp, gp, ret, base;
-} exec_header_t;
+};
 
-typedef struct {
+struct psxexe_hdr_t {
 	char key[8];
 	uint32_t text;
 	uint32_t data;
 	exec_header_t exec;
 	char title[60];
-} psxexe_hdr_t;
+};
 
-struct psf_load_state
-{
+struct psf_load_state {
 	int version;
 	void* emu;
 	bool first;
@@ -152,12 +152,10 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 }
 
 #if defined(_M_IX86) || defined(_M_X64) || defined(_M_ARM)
-#define PFC_BYTE_ORDER_IS_BIG_ENDIAN 0
+constexpr auto byte_order_is_big_endian = false;
 #else
-#define PFC_BYTE_ORDER_IS_BIG_ENDIAN 1
+constexpr auto byte_order_is_big_endian = true;
 #endif
-
-static const bool byte_order_is_big_endian = !!PFC_BYTE_ORDER_IS_BIG_ENDIAN;
 
 uint32_t byteswap_if_be_t(uint32_t p_param) noexcept {
 	return byte_order_is_big_endian ? _byteswap_ulong(p_param) : p_param;
@@ -166,12 +164,11 @@ uint32_t byteswap_if_be_t(uint32_t p_param) noexcept {
 int psf1_load_callback(psf_load_state* state, const uint8_t* exe, size_t exe_size,
 	const uint8_t* reserved, size_t reserved_size) noexcept
 {
-	const psxexe_hdr_t* psx = reinterpret_cast<const psxexe_hdr_t*>(exe);
-
 	if (exe_size < 0x800) {
 		return -1;
 	}
 
+	const psxexe_hdr_t* psx = reinterpret_cast<const psxexe_hdr_t*>(exe);
 	uint32_t addr = byteswap_if_be_t(psx->exec.t_addr);
 	const uint32_t size = exe_size - 0x800;
 
@@ -183,9 +180,8 @@ int psf1_load_callback(psf_load_state* state, const uint8_t* exe, size_t exe_siz
 	void* pIOP = psx_get_iop_state(state->emu);
 	iop_upload_to_ram(pIOP, addr, exe + 0x800, size);
 
-	if (!state->meta_state->refresh)
-	{
-		if (!_strnicmp((const char*)exe + 113, "Europe", 6)) {
+	if (!state->meta_state->refresh) {
+		if (_strnicmp((const char*)exe + 113, "Europe", 6) == 0) {
 			state->meta_state->refresh = 50;
 		}
 		else {
@@ -193,8 +189,7 @@ int psf1_load_callback(psf_load_state* state, const uint8_t* exe, size_t exe_siz
 		}
 	}
 
-	if (state->first)
-	{
+	if (state->first) {
 		void* pR3000 = iop_get_r3000_state(pIOP);
 		r3000_setreg(pR3000, R3000_REG_PC, byteswap_if_be_t(psx->exec.pc0));
 		r3000_setreg(pR3000, R3000_REG_GEN + 29, byteswap_if_be_t(psx->exec.s_ptr));
@@ -251,15 +246,16 @@ static long psf_file_ftell(void* handle) noexcept
 
 static void print_message(void* context, const char* message)
 {
-	if (context != nullptr) {
-		std::string* string = static_cast<std::string*>(context);
-		string->append(message);
+	if (context == nullptr) {
+		return;
 	}
+
+	std::string* string = static_cast<std::string*>(context);
+	string->append(message);
 }
 
 bool Psf::psx_core_was_initialized = false;
-
-constexpr auto HEBIOS_SIZE = 524288;
+uint8_t Psf::bios[HEBIOS_SIZE] = {};
 
 bool Psf::initialize_psx_core(const char* bios_path) noexcept
 {
@@ -267,8 +263,6 @@ bool Psf::initialize_psx_core(const char* bios_path) noexcept
 	if (fopen_s(&handle, bios_path, "rb") != 0 || handle == nullptr) {
 		return false;
 	}
-
-	uint8_t bios[HEBIOS_SIZE];
 
 	if (fread(&bios[0], sizeof(uint8_t), HEBIOS_SIZE, handle) != sizeof(uint8_t) * HEBIOS_SIZE) {
 		return false;
@@ -287,14 +281,17 @@ bool Psf::initialize_psx_core(const char* bios_path) noexcept
 
 Psf::Psf(uint8_t compat, bool reverb,
 	bool do_filter, bool suppressEndSilence, bool suppressOpeningSilence,
-	int endSilenceSeconds) noexcept :
+	int endSilenceSeconds) :
 	compat(compat), reverb(reverb),
 	do_filter(do_filter), suppressEndSilence(suppressEndSilence),
 	suppressOpeningSilence(suppressOpeningSilence),
-	endSilenceSeconds(endSilenceSeconds),
-	openingSilenceSuppressed(false), psx_state(nullptr),
-	silence_test_buffer(0), psf2fs(nullptr),
-	psf_version(0), samplerate(0),
+	endSilenceSeconds(endSilenceSeconds), no_loop(true),
+	eof(false), openingSilenceSuppressed(false),
+	psx_state_size(0), psx_state(nullptr), psx_initial_state(nullptr),
+	silence_test_buffer(0), psf2fs(nullptr), err(0),
+	psf_version(0), data_written(0),
+	song_len(0), fade_len(0),
+	samplerate(0), last_error(""),
 	info_state(psf_info_meta_state()),
 	is_open(false)
 {
@@ -317,6 +314,7 @@ Psf::~Psf()
 	}
 	if (psx_state != nullptr) {
 		delete[] psx_state;
+		delete[] psx_initial_state;
 	}
 }
 
@@ -364,13 +362,16 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 
 	samplerate = psf_version == 2 ? 48000 : 44100;
 	no_loop = !infinite;
+	psx_state_size = psx_get_state_size(psf_version);
 
 	if (psx_state != nullptr && psf_version != previous_version) {
 		delete[] psx_state;
+		delete[] psx_initial_state;
 		psx_state = nullptr;
 	}
 	if (psx_state == nullptr) {
-		psx_state = new char[psx_get_state_size(psf_version)];
+		psx_state = new char[psx_state_size];
+		psx_initial_state = new char[psx_state_size];
 	}
 
 	psx_clear_state(psx_state, psf_version);
@@ -409,9 +410,23 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 		return false;
 	}
 
+	last_status.append("\nPSF Version: ");
+	last_status.append(psf_version == 1 ? "1" : "2");
+	last_status.append(", refresh: ");
+	last_status.append(info_state.refresh == 50 ? "50" : (info_state.refresh == 60 ? "60" : "0"));
+
 	if (!info_state.tag_song_ms) {
 		info_state.tag_song_ms = default_length;
 		info_state.tag_fade_ms = default_fade;
+	}
+
+	if (info_state.tag_song_ms) {
+		song_len = ms_to_samples(info_state.tag_song_ms);
+		fade_len = ms_to_samples(info_state.tag_fade_ms);
+	}
+	else if (no_loop) {
+		last_error = "No song duration found";
+		return false;
 	}
 
 	if (info_state.refresh) {
@@ -431,20 +446,18 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 	eof = false;
 	err = 0;
 	data_written = 0;
-	pos_delta = 0;
-	psfemu_pos_ms = 0;
 	openingSilenceSuppressed = false;
-
-	calcfade();
 
 	if (suppressEndSilence) {
 		const unsigned end_skip_max = endSilenceSeconds * samplerate;
 		silence_test_buffer.resize(end_skip_max * 2);
 	}
 
-	if (do_filter) {
+	/* if (do_filter) {
 		filter.Redesign(samplerate);
-	}
+	} */
+
+	memcpy(psx_initial_state, psx_state, psx_state_size);
 
 	is_open = true;
 
@@ -463,7 +476,7 @@ int Psf::get_sample_rate() const noexcept
 
 int Psf::get_channel_count() const noexcept
 {
-	return 2;
+	return PSF_CHANNEL_COUNT;
 }
 
 int Psf::get_bits_per_seconds() const noexcept
@@ -481,111 +494,118 @@ const char* Psf::get_last_status() const noexcept
 	return last_status.c_str();
 }
 
-size_t Psf::decode(int16_t* data, unsigned int sample_count)
+int Psf::decode(int16_t* data, int sample_count)
 {
-	if (!is_open) {
-		return false;
+	if (!is_open || sample_count < 0) {
+		last_error = !is_open ? "Not opened" : "Negative sample_count";
+		return -1;
 	}
 
+	if (err <= -2) {
+		last_error = "PSX unrecoverable error";
+		return -1;
+	}
+
+	if (sample_count == 0 || ((err == -1 || eof) && !silence_test_buffer.data_available())) {
+		return 0;
+	}
+
+	unsigned int _sample_count = (unsigned int)sample_count;
 	int remainder = 0;
 
 	if (suppressOpeningSilence && !openingSilenceSuppressed) { // ohcrap
-		int startsilence = 0;
 		unsigned int silence = 0;
-		unsigned start_skip_max = 60 * samplerate;
+		const unsigned start_skip_max = 60 * samplerate;
 
-		for (;;) {
-			unsigned skip_howmany = start_skip_max - silence;
-			if (skip_howmany > sample_count) {
-				skip_howmany = sample_count;
+		while (silence < start_skip_max) {
+			unsigned int skip_howmany = start_skip_max - silence;
+			if (skip_howmany > _sample_count) {
+				skip_howmany = _sample_count;
 			}
-			sample_buffer.resize(skip_howmany * 2);
-			const int rtn = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &skip_howmany, 0);
-			if (rtn < 0) {
-				last_error = "Nothing executed";
-				return 0;
+			sample_buffer.resize(skip_howmany * PSF_CHANNEL_COUNT);
+			err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &skip_howmany, 0);
+			if (err <= -2) {
+				last_error = "PSX unrecoverable error (opening silence)";
+				return -1;
 			}
 
-			short* foo = sample_buffer.data();
-			unsigned i;
+			const int32_t* cur_buff = reinterpret_cast<int32_t*>(sample_buffer.data());
+			unsigned int i = 0;
 
-			for (i = 0; i < skip_howmany; ++i) {
-				if (foo[0] || foo[1]) {
+			for (; i < skip_howmany; ++i) {
+				if (cur_buff[i]) {
 					break;
 				}
-				foo += 2;
 			}
 
 			silence += i;
 
 			if (i < skip_howmany) {
 				remainder = skip_howmany - i;
-				memmove(sample_buffer.data(), foo, remainder * sizeof(short) * 2);
+				memmove(sample_buffer.data(), &cur_buff[i], remainder * sizeof(uint16_t) * PSF_CHANNEL_COUNT);
 				break;
 			}
 
-			if (silence >= start_skip_max) {
+			if (err == -1) {
 				eof = true;
 				break;
 			}
 		}
 
-		startsilence += silence;
-		silence = 0;
 		openingSilenceSuppressed = true;
+
+		if (silence >= start_skip_max) {
+			eof = true;
+			return 0;
+		}
 	}
 
-	if ((eof || err < 0) && !silence_test_buffer.data_available()) {
-		return 0;
-	}
-
-	if (no_loop && info_state.tag_song_ms
-		&& pos_delta + MulDiv(data_written, 1000, samplerate) >= info_state.tag_song_ms + info_state.tag_fade_ms) {
-		return 0;
-	}
-
-	UINT written = 0;
-
-	unsigned int samples;
+	unsigned int written = 0, samples;
 
 	if (no_loop) {
-		samples = (song_len + fade_len) - data_written;
-		if (samples > sample_count) {
-			samples = sample_count;
+		if (song_len + fade_len <= data_written) {
+			return 0;
+		}
+
+		samples = song_len + fade_len - data_written;
+
+		if (samples > _sample_count) {
+			samples = _sample_count;
 		}
 	}
 	else {
-		samples = sample_count;
+		samples = _sample_count;
 	}
 
-	if (suppressEndSilence) {
-		sample_buffer.resize(sample_count * 2);
+	if (data != nullptr && suppressEndSilence) {
+		sample_buffer.resize(_sample_count * PSF_CHANNEL_COUNT);
 
 		if (!eof) {
-			unsigned free_space = silence_test_buffer.free_space() / 2;
+			unsigned free_space = silence_test_buffer.free_space() / PSF_CHANNEL_COUNT;
 			while (free_space) {
-				unsigned samples_to_render;
+				unsigned int samples_to_render;
 				if (remainder) {
 					samples_to_render = remainder;
 					remainder = 0;
 				}
 				else {
 					samples_to_render = free_space;
-					if (samples_to_render > sample_count) {
-						samples_to_render = sample_count;
+					if (samples_to_render > _sample_count) {
+						samples_to_render = _sample_count;
 					}
-					err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), & samples_to_render, 0);
-					if (err == -2) {
-						// FIXME: error
+					err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &samples_to_render, 0);
+					if (err <= -2) {
+						last_error = "PSX unrecoverable error (end silence)";
+						return -1;
 					}
 					if (!samples_to_render) {
-						last_error = "Nothing executed";
-						return 0;
+						eof = true;
+						break;
 					}
 				}
-				silence_test_buffer.write(sample_buffer.data(), samples_to_render * 2);
+				silence_test_buffer.write(sample_buffer.data(), samples_to_render * PSF_CHANNEL_COUNT);
 				free_space -= samples_to_render;
-				if (err < 0) {
+				if (err == -1) {
 					eof = true;
 					break;
 				}
@@ -597,63 +617,61 @@ size_t Psf::decode(int16_t* data, unsigned int sample_count)
 			return 0;
 		}
 
-		written = silence_test_buffer.data_available() / 2;
+		written = silence_test_buffer.data_available() / PSF_CHANNEL_COUNT;
 		if (written > samples) {
 			written = samples;
 		}
-		silence_test_buffer.read(sample_buffer.data(), written * 2);
+		silence_test_buffer.read(sample_buffer.data(), written * PSF_CHANNEL_COUNT);
 	}
 	else {
-		sample_buffer.resize(samples * 2);
+		if (data != nullptr) {
+			sample_buffer.resize(samples * PSF_CHANNEL_COUNT);
+		}
 
 		if (remainder) {
 			written = remainder;
 		}
 		else {
 			written = samples;
-			//DBG("hw_execute()");
-			err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &written, 0);
-			if (err == -2) {
-				// FIXME: error
+			err = psx_execute(psx_state, 0x7FFFFFFF, data != nullptr ? sample_buffer.data() : nullptr, &written, 0);
+			if (err <= -2) {
+				last_error = "PSX unrecoverable error";
+				return -1;
 			}
-			if (!written) {
-				last_error = "Nothing executed";
-				return 0;
-			}
-			if (err < 0) {
+			if (!written || err == -1) {
 				eof = true;
 			}
 		}
 	}
 
-	psfemu_pos_ms += (long long)(written / double(samplerate) * 1000.0);
-
-	int d_start, d_end;
-	d_start = data_written;
+	const unsigned int d_start = data_written;
 	data_written += written;
-	d_end = data_written;
 
-	if (info_state.tag_song_ms && d_end > song_len && no_loop) {
-		short* foo = sample_buffer.data();
-		int n;
-		for (n = d_start; n < d_end; ++n) {
+	if (data == nullptr || written == 0) {
+		return written;
+	}
+
+	if (no_loop && data_written > song_len) {
+		int16_t* foo = sample_buffer.data();
+		unsigned int n;
+		for (n = d_start; n < data_written; ++n) {
 			if (n > song_len) {
-				if (n > song_len + fade_len) {
-					*(DWORD*)foo = 0;
+				if (n >= song_len + fade_len) {
+					*(unsigned long*)foo = 0;
 				}
 				else {
-					int bleh = song_len + fade_len - n;
-					foo[0] = MulDiv(foo[0], bleh, fade_len);
-					foo[1] = MulDiv(foo[1], bleh, fade_len);
+					const unsigned int bleh = song_len + fade_len - n;
+					foo[0] = int16_t(int(foo[0] * bleh) / fade_len);
+					foo[1] = int16_t(int(foo[1] * bleh) / fade_len);
 				}
 			}
 			foo += 2;
 		}
 	}
 
-	memcpy(data, sample_buffer.data(), written * sizeof(int16_t) * 2);
-	/* 
-	int16_t* input = reinterpret_cast<int16_t*>(sample_buffer.data());
+	memcpy(data, sample_buffer.data(), written * sizeof(int16_t) * PSF_CHANNEL_COUNT);
+
+	/* int16_t* input = reinterpret_cast<int16_t*>(sample_buffer.data());
 	float* output = data;
 	float p_scale = float(1.0f / double(0x8000));
 	for (size_t num = written * 2; num; num--) {
@@ -662,7 +680,7 @@ size_t Psf::decode(int16_t* data, unsigned int sample_count)
 
 	if (do_filter) {
 		filter.Process(data, written);
-	}*/
+	} */
 
 	return written;
 }
@@ -673,46 +691,23 @@ bool Psf::seek(unsigned int p_ms)
 		return false;
 	}
 
-	eof = false;
+	const unsigned int seek_pos = ms_to_samples(p_ms);
 
-	const int buffered_time_ms = int(silence_test_buffer.data_available() / 2.0 / double(samplerate) * 1000.0);
-
-	psfemu_pos_ms += buffered_time_ms;
-
-	silence_test_buffer.reset();
-
-	if (do_filter) {
-		filter.Reset();
+	if (seek_pos == data_written) {
+		return true;
 	}
 
-	void *pEmu = psx_state;
-	if (p_ms < psfemu_pos_ms) { // Not initialized
-		last_error = "Not initialized";
-		return false;
-	}
-	unsigned int howmany = int(floor(samplerate * ((p_ms - psfemu_pos_ms) / 1000.0) + 0.5));
+	if (seek_pos < data_written) {
+		// Reinitialize decode
+		memcpy(psx_state, psx_initial_state, psx_state_size);
 
-	// more abortable, and emu doesn't like doing huge numbers of samples per call anyway
-	while (howmany) {
-		unsigned todo = howmany;
-		if (todo > 2048) {
-			todo = 2048;
-		}
-		const int rtn = psx_execute(pEmu, 0x7FFFFFFF, 0, & todo, 0);
-		if (rtn < 0 || ! todo) {
-			eof = true;
-			return false;
-		}
-		howmany -= todo;
+		eof = false;
+		err = 0;
+		data_written = 0;
+		openingSilenceSuppressed = false;
 	}
 
-	data_written = 0;
-	pos_delta = p_ms;
-	psfemu_pos_ms = p_ms;
-
-	calcfade();
-
-	return true;
+	return decode(nullptr, seek_pos - data_written);
 }
 
 bool Psf::is_our_path(const char* p_full_path, const char* p_extension) noexcept
@@ -724,8 +719,7 @@ bool Psf::is_our_path(const char* p_full_path, const char* p_extension) noexcept
 		!_stricmp(p_extension, "psf2") || !_stricmp(p_extension, "minipsf2");
 }
 
-void Psf::calcfade() noexcept
+unsigned int Psf::ms_to_samples(unsigned int ms) const noexcept
 {
-	song_len = MulDiv(info_state.tag_song_ms - pos_delta, samplerate, 1000);
-	fade_len = MulDiv(info_state.tag_fade_ms, samplerate, 1000);
+	return (long long)(ms * samplerate) / 1000;
 }
