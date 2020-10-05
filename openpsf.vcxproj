@@ -269,6 +269,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="circular_buffer.cpp" />
     <ClCompile Include="openpsf_c.cpp" />
     <ClCompile Include="openpsf.cpp" />
     <ClCompile Include="PSXFilter.cpp" />

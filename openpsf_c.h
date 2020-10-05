@@ -24,7 +24,7 @@ extern "C" {
 	DLLEXPORT bool openpsf_open(PSF* self, const char* p_path, bool infinite);
 	DLLEXPORT void openpsf_close(PSF* self);
 	DLLEXPORT size_t openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count);
-	DLLEXPORT bool openpsf_seek(PSF* self, unsigned int ms);
+	DLLEXPORT bool openpsf_rewind(PSF* self);
 	DLLEXPORT int openpsf_get_length(PSF* self);
 	DLLEXPORT int openpsf_get_sample_rate(PSF* self);
 	DLLEXPORT int openpsf_get_channel_count(PSF* self);

@@ -5,6 +5,7 @@
 
 constexpr auto BORK_TIME = 0xC0CAC01A;
 constexpr auto PSF_CHANNEL_COUNT = 2;
+constexpr auto PSF_MAX_SAMPLE_COUNT = 1024;
 
 #include "../highly_experimental/Core/psx.h"
 #include "../highly_experimental/Core/iop.h"
@@ -304,6 +305,7 @@ Psf::Psf(uint8_t compat, bool reverb,
 		psf_file_fclose,
 		psf_file_ftell
 	};
+	sample_buffer = new int16_t[PSF_MAX_SAMPLE_COUNT * PSF_CHANNEL_COUNT];
 }
 
 Psf::~Psf()
@@ -314,8 +316,11 @@ Psf::~Psf()
 	}
 	if (psx_state != nullptr) {
 		delete[] psx_state;
+	}
+	if (psx_initial_state != nullptr) {
 		delete[] psx_initial_state;
 	}
+	delete[] sample_buffer;
 }
 
 void Psf::close() noexcept
@@ -366,7 +371,9 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 
 	if (psx_state != nullptr && psf_version != previous_version) {
 		delete[] psx_state;
-		delete[] psx_initial_state;
+		if (psx_initial_state != nullptr) {
+			delete[] psx_initial_state;
+		}
 		psx_state = nullptr;
 	}
 	if (psx_state == nullptr) {
@@ -510,100 +517,100 @@ int Psf::decode(int16_t* data, int sample_count)
 		return 0;
 	}
 
-	unsigned int _sample_count = (unsigned int)sample_count;
-	int remainder = 0;
+	if (sample_count > PSF_MAX_SAMPLE_COUNT) {
+		sample_count = PSF_MAX_SAMPLE_COUNT;
+	}
+
+	unsigned int remainder = 0, written = 0, samples = (unsigned int)sample_count;
+	int16_t* source_buffer = sample_buffer;
 
 	if (suppressOpeningSilence && !openingSilenceSuppressed) { // ohcrap
 		unsigned int silence = 0;
-		const unsigned start_skip_max = 60 * samplerate;
+		const unsigned start_skip_max = 30 * samplerate;
 
 		while (silence < start_skip_max) {
-			unsigned int skip_howmany = start_skip_max - silence;
-			if (skip_howmany > _sample_count) {
-				skip_howmany = _sample_count;
-			}
-			sample_buffer.resize(skip_howmany * PSF_CHANNEL_COUNT);
-			err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &skip_howmany, 0);
+			unsigned int samples_to_render = samples;
+			err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer, &samples_to_render, 0);
 			if (err <= -2) {
 				last_error = "PSX unrecoverable error (opening silence)";
 				return -1;
 			}
 
-			const int32_t* cur_buff = reinterpret_cast<int32_t*>(sample_buffer.data());
+			// Test silence
 			unsigned int i = 0;
 
-			for (; i < skip_howmany; ++i) {
-				if (cur_buff[i]) {
+			for (; i < samples_to_render; ++i) {
+				if (sample_buffer[i * PSF_CHANNEL_COUNT] || sample_buffer[i * PSF_CHANNEL_COUNT + 1]) {
 					break;
 				}
 			}
 
-			silence += i;
-
-			if (i < skip_howmany) {
-				remainder = skip_howmany - i;
-				memmove(sample_buffer.data(), &cur_buff[i], remainder * sizeof(uint16_t) * PSF_CHANNEL_COUNT);
+			if (i < samples_to_render) {
+				remainder = samples_to_render - i;
+				source_buffer = &sample_buffer[i * PSF_CHANNEL_COUNT];
 				break;
 			}
 
 			if (err == -1) {
-				eof = true;
 				break;
 			}
+
+			silence += i;
+		}
+
+		// Timeout
+		if (silence >= start_skip_max) {
+			eof = true;
+			last_error = "Cannot skip opening silence";
+			return -2;
 		}
 
 		openingSilenceSuppressed = true;
 
-		if (silence >= start_skip_max) {
+		if (err == -1) {
 			eof = true;
-			return 0;
 		}
 	}
 
-	unsigned int written = 0, samples;
-
 	if (no_loop) {
+		// No more data
 		if (song_len + fade_len <= data_written) {
 			return 0;
 		}
 
-		samples = song_len + fade_len - data_written;
+		const unsigned int remaining_to_write = song_len + fade_len - data_written;
 
-		if (samples > _sample_count) {
-			samples = _sample_count;
+		if (remaining_to_write < samples) {
+			samples = remaining_to_write;
 		}
-	}
-	else {
-		samples = _sample_count;
 	}
 
 	if (data != nullptr && suppressEndSilence) {
-		sample_buffer.resize(_sample_count * PSF_CHANNEL_COUNT);
-
 		if (!eof) {
-			unsigned free_space = silence_test_buffer.free_space() / PSF_CHANNEL_COUNT;
-			while (free_space) {
+			unsigned int free_space = silence_test_buffer.free_space() / PSF_CHANNEL_COUNT;
+
+			while (free_space > 0) {
 				unsigned int samples_to_render;
-				if (remainder) {
+				if (remainder > 0) {
 					samples_to_render = remainder;
 					remainder = 0;
 				}
 				else {
 					samples_to_render = free_space;
-					if (samples_to_render > _sample_count) {
-						samples_to_render = _sample_count;
+					if (samples_to_render > samples) {
+						samples_to_render = samples;
 					}
-					err = psx_execute(psx_state, 0x7FFFFFFF, sample_buffer.data(), &samples_to_render, 0);
+					err = psx_execute(psx_state, 0x7FFFFFFF, source_buffer, &samples_to_render, 0);
 					if (err <= -2) {
 						last_error = "PSX unrecoverable error (end silence)";
 						return -1;
 					}
-					if (!samples_to_render) {
+					if (samples_to_render == 0) {
 						eof = true;
 						break;
 					}
 				}
-				silence_test_buffer.write(sample_buffer.data(), samples_to_render * PSF_CHANNEL_COUNT);
+				silence_test_buffer.write(source_buffer, samples_to_render * PSF_CHANNEL_COUNT);
 				free_space -= samples_to_render;
 				if (err == -1) {
 					eof = true;
@@ -621,24 +628,20 @@ int Psf::decode(int16_t* data, int sample_count)
 		if (written > samples) {
 			written = samples;
 		}
-		silence_test_buffer.read(sample_buffer.data(), written * PSF_CHANNEL_COUNT);
+		silence_test_buffer.read(source_buffer, written * PSF_CHANNEL_COUNT);
 	}
 	else {
-		if (data != nullptr) {
-			sample_buffer.resize(samples * PSF_CHANNEL_COUNT);
-		}
-
-		if (remainder) {
+		if (remainder > 0) {
 			written = remainder;
 		}
 		else {
 			written = samples;
-			err = psx_execute(psx_state, 0x7FFFFFFF, data != nullptr ? sample_buffer.data() : nullptr, &written, 0);
+			err = psx_execute(psx_state, 0x7FFFFFFF, data != nullptr ? source_buffer : nullptr, &written, 0);
 			if (err <= -2) {
 				last_error = "PSX unrecoverable error";
 				return -1;
 			}
-			if (!written || err == -1) {
+			if (written == 0 || err == -1) {
 				eof = true;
 			}
 		}
@@ -652,26 +655,26 @@ int Psf::decode(int16_t* data, int sample_count)
 	}
 
 	if (no_loop && data_written > song_len) {
-		int16_t* foo = sample_buffer.data();
+		int16_t* samples_a = source_buffer;
 		unsigned int n;
 		for (n = d_start; n < data_written; ++n) {
 			if (n > song_len) {
 				if (n >= song_len + fade_len) {
-					*(unsigned long*)foo = 0;
+					*(int32_t*)samples_a = 0;
 				}
 				else {
-					const unsigned int bleh = song_len + fade_len - n;
-					foo[0] = int16_t(int(foo[0] * bleh) / fade_len);
-					foo[1] = int16_t(int(foo[1] * bleh) / fade_len);
+					const unsigned int cur = song_len + fade_len - n;
+					samples_a[0] = int16_t(int(samples_a[0] * cur) / fade_len);
+					samples_a[1] = int16_t(int(samples_a[1] * cur) / fade_len);
 				}
 			}
-			foo += 2;
+			samples_a += 2;
 		}
 	}
 
-	memcpy(data, sample_buffer.data(), written * sizeof(int16_t) * PSF_CHANNEL_COUNT);
+	memcpy(data, source_buffer, written * sizeof(int16_t) * PSF_CHANNEL_COUNT);
 
-	/* int16_t* input = reinterpret_cast<int16_t*>(sample_buffer.data());
+	/* int16_t* input = sample_buffer;
 	float* output = data;
 	float p_scale = float(1.0f / double(0x8000));
 	for (size_t num = written * 2; num; num--) {
@@ -685,29 +688,22 @@ int Psf::decode(int16_t* data, int sample_count)
 	return written;
 }
 
-bool Psf::seek(unsigned int p_ms)
+bool Psf::rewind() noexcept
 {
 	if (!is_open) {
+		last_error = "Not opened";
 		return false;
 	}
+	// Reinitialize decode // FIXME: verify
+	memcpy(psx_state, psx_initial_state, psx_state_size);
 
-	const unsigned int seek_pos = ms_to_samples(p_ms);
+	eof = false;
+	err = 0;
+	data_written = 0;
+	openingSilenceSuppressed = false;
+	silence_test_buffer.reset();
 
-	if (seek_pos == data_written) {
-		return true;
-	}
-
-	if (seek_pos < data_written) {
-		// Reinitialize decode
-		memcpy(psx_state, psx_initial_state, psx_state_size);
-
-		eof = false;
-		err = 0;
-		data_written = 0;
-		openingSilenceSuppressed = false;
-	}
-
-	return decode(nullptr, seek_pos - data_written);
+	return true;
 }
 
 bool Psf::is_our_path(const char* p_full_path, const char* p_extension) noexcept
@@ -721,5 +717,5 @@ bool Psf::is_our_path(const char* p_full_path, const char* p_extension) noexcept
 
 unsigned int Psf::ms_to_samples(unsigned int ms) const noexcept
 {
-	return (long long)(ms * samplerate) / 1000;
+	return (long long)ms * (long long)samplerate / 1000;
 }

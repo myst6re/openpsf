@@ -58,12 +58,12 @@ size_t openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count)
 	return instance(self)->decode(data, sample_count);
 }
 
-bool openpsf_seek(PSF* self, unsigned int ms)
+bool openpsf_rewind(PSF* self)
 {
 	if (self == nullptr) {
 		return false;
 	}
-	return instance(self)->seek(ms);
+	return instance(self)->rewind();
 }
 
 int openpsf_get_length(PSF* self)

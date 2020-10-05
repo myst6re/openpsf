@@ -37,8 +37,8 @@ private:
 	bool openingSilenceSuppressed;
 	size_t psx_state_size;
 	char* psx_state, *psx_initial_state;
-	std::vector<int16_t> sample_buffer;
-	circular_buffer<int16_t> silence_test_buffer;
+	int16_t* sample_buffer;
+	CircularBuffer<int16_t> silence_test_buffer;
 	void* psf2fs;
 	CPSXFilter filter;
 	int err;
@@ -56,7 +56,6 @@ private:
 	static uint8_t bios[HEBIOS_SIZE];
 
 	uint8_t open_version(const char* path) noexcept;
-	bool reset_decode();
 	void calcfade() noexcept;
 	unsigned int ms_to_samples(unsigned int ms) const noexcept;
 public:
@@ -68,7 +67,7 @@ public:
 	DLLEXPORT void close() noexcept;
 	DLLEXPORT bool open(const char* p_path, bool infinite = false, int default_length = 170000, int default_fade = 10000);
 	DLLEXPORT int decode(int16_t* data, int sample_count);
-	DLLEXPORT bool seek(unsigned int p_ms);
+	DLLEXPORT bool rewind() noexcept;
 	DLLEXPORT int get_length() const noexcept;
 	DLLEXPORT int get_sample_rate() const noexcept;
 	DLLEXPORT int get_channel_count() const noexcept;
