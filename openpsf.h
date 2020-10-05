@@ -1,6 +1,6 @@
 #pragma once
 
-#define OPENPSF_VERSION "1.1.0"
+#define OPENPSF_VERSION "1.2.0"
 
 #define IOP_COMPAT_DEFAULT  (0)
 #define IOP_COMPAT_HARSH    (1)
