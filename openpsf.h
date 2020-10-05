@@ -38,7 +38,7 @@ private:
 	size_t psx_state_size;
 	char* psx_state, *psx_initial_state;
 	int16_t* sample_buffer;
-	CircularBuffer<int16_t> silence_test_buffer;
+	CircularBuffer silence_test_buffer;
 	void* psf2fs;
 	CPSXFilter filter;
 	int err;

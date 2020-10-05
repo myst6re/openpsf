@@ -7,27 +7,23 @@
 
 auto constexpr silence_threshold = 8;
 
-template <typename T>
-CircularBuffer<T>::CircularBuffer(unsigned int p_size) :
+CircularBuffer::CircularBuffer(unsigned int p_size) :
 	readptr(0), writeptr(0), size(p_size), used(0)
 {
 	buffer.reserve(p_size);
 }
 
-template <typename T>
-unsigned CircularBuffer<T>::data_available() noexcept
+unsigned CircularBuffer::data_available() noexcept
 {
 	return used;
 }
 
-template <typename T>
-unsigned CircularBuffer<T>::free_space() noexcept
+unsigned CircularBuffer::free_space() noexcept
 {
 	return size - used;
 }
 
-template <typename T>
-bool CircularBuffer<T>::write(const T* src, unsigned int count)
+bool CircularBuffer::write(const int16_t* src, unsigned int count)
 {
 	if (count > free_space()) {
 		return false;
@@ -48,8 +44,7 @@ bool CircularBuffer<T>::write(const T* src, unsigned int count)
 	return true;
 }
 
-template <typename T>
-unsigned CircularBuffer<T>::read(T* dst, unsigned int count)
+unsigned CircularBuffer::read(int16_t* dst, unsigned int count)
 {
 	unsigned done = 0;
 	for (;;) {
@@ -68,27 +63,24 @@ unsigned CircularBuffer<T>::read(T* dst, unsigned int count)
 	return done;
 }
 
-template <typename T>
-void CircularBuffer<T>::reset() noexcept
+void CircularBuffer::reset() noexcept
 {
 	readptr = writeptr = used = 0;
 }
 
-template <typename T>
-void CircularBuffer<T>::resize(unsigned int p_size)
+void CircularBuffer::resize(unsigned int p_size)
 {
 	size = p_size;
 	buffer.reserve(p_size);
 	reset();
 }
 
-template <typename T>
-bool CircularBuffer<T>::test_silence() const noexcept
+bool CircularBuffer::test_silence() const noexcept
 {
-	T* begin = (T*)&buffer[0];
-	T first = *begin;
+	int16_t* begin = (int16_t*)&buffer[0];
+	int16_t first = *begin;
 	*begin = silence_threshold * 2;
-	T* p = begin + size;
+	int16_t* p = begin + size;
 	while ((unsigned int)(*--p + silence_threshold) <= (unsigned int)silence_threshold * 2) {}
 	*begin = first;
 	return p == begin && ((unsigned int)(first + silence_threshold) <= (unsigned int)silence_threshold * 2);
