@@ -2,14 +2,9 @@
 
 #define OPENPSF_VERSION "1.2.0"
 
-#define IOP_COMPAT_DEFAULT  (0)
-#define IOP_COMPAT_HARSH    (1)
-#define IOP_COMPAT_FRIENDLY (2)
-
 #include <psflib.h>
 #include <string>
 #include <vector>
-#include <windows.h>
 #include <cstdint>
 
 #include "PSXFilter.h"
@@ -26,15 +21,27 @@ struct psf_info_meta_state
 	bool looping;
 };
 
+enum PsfFlags {
+	PsfDefaults = 0x0,
+	NoReverb = 0x1,
+	NoSimulateFrequencyResponse = 0x2,
+	SuppressOpeningSilence = 0x4,
+	Debug = 0x8
+};
+
+PsfFlags operator|(PsfFlags flags, PsfFlags other) noexcept {
+	return static_cast<PsfFlags>(static_cast<int>(flags) | static_cast<int>(other));
+}
+
 class Psf
 {
 private:
 	uint8_t compat;
-	bool reverb, do_filter;
-	const bool suppressEndSilence, suppressOpeningSilence;
-	const int endSilenceSeconds;
+	bool reverb, simulate_frequency_response;
+	const bool suppress_opening_silence;
+	const int end_silence_seconds;
 	bool no_loop, eof;
-	bool openingSilenceSuppressed;
+	bool opening_silence_suppressed;
 	size_t psx_state_size;
 	char* psx_state, *psx_initial_state;
 	int16_t* sample_buffer;
@@ -60,15 +67,13 @@ private:
 	unsigned int ms_to_samples(unsigned int ms) const noexcept;
 public:
 	DLLEXPORT static bool initialize_psx_core(const char* bios_path) noexcept;
-	DLLEXPORT Psf(uint8_t compat = IOP_COMPAT_FRIENDLY, bool reverb = true,
-		bool do_filter = true, bool suppressEndSilence = true, bool suppressOpeningSilence = true,
-		int endSilenceSeconds = 5);
+	DLLEXPORT Psf(PsfFlags flags = PsfDefaults, int end_silence_seconds = 5);
 	DLLEXPORT virtual ~Psf();
 	DLLEXPORT void close() noexcept;
 	DLLEXPORT bool open(const char* p_path, bool infinite = false, int default_length = 170000, int default_fade = 10000);
 	DLLEXPORT int decode(int16_t* data, int sample_count);
 	DLLEXPORT bool rewind() noexcept;
-	DLLEXPORT int get_length() const noexcept;
+	DLLEXPORT int get_sample_count() const noexcept;
 	DLLEXPORT int get_sample_rate() const noexcept;
 	DLLEXPORT int get_channel_count() const noexcept;
 	DLLEXPORT int get_bits_per_seconds() const noexcept;

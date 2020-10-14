@@ -18,14 +18,14 @@ extern "C" {
 	DLLEXPORT bool openpsf_initialize_psx_core(const char* bios_path);
 	DLLEXPORT bool openpsf_is_our_path(const char* p_full_path, const char* p_extension);
 	DLLEXPORT PSF* openpsf_create();
-	DLLEXPORT PSF* openpsf_create_with_params(bool reverb, bool do_filter, bool suppressEndSilence, bool suppressOpeningSilence,
-		int endSilenceSeconds);
+	DLLEXPORT PSF* openpsf_create_with_params(bool reverb, bool simulate_frequency_response, bool suppress_opening_silence,
+		int end_silence_seconds);
 	DLLEXPORT void openpsf_destroy(PSF* self);
 	DLLEXPORT bool openpsf_open(PSF* self, const char* p_path, bool infinite);
 	DLLEXPORT void openpsf_close(PSF* self);
 	DLLEXPORT size_t openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count);
 	DLLEXPORT bool openpsf_rewind(PSF* self);
-	DLLEXPORT int openpsf_get_length(PSF* self);
+	DLLEXPORT int openpsf_get_sample_count(PSF* self);
 	DLLEXPORT int openpsf_get_sample_rate(PSF* self);
 	DLLEXPORT int openpsf_get_channel_count(PSF* self);
 	DLLEXPORT int openpsf_get_bits_per_seconds(PSF* self);

@@ -2,7 +2,7 @@
 #include "openpsf.h"
 
 Psf* instance(PSF* self) noexcept {
-	return (Psf*)self;
+	return static_cast<Psf*>(self);
 }
 
 bool openpsf_initialize_psx_core(const char* bios_path)
@@ -15,16 +15,26 @@ bool openpsf_is_our_path(const char* p_full_path, const char* p_extension)
 	return Psf::is_our_path(p_full_path, p_extension);
 }
 
-PSF* openpsf_create_with_params(bool reverb, bool do_filter, bool suppressEndSilence, bool suppressOpeningSilence,
-	int endSilenceSeconds)
+PSF* openpsf_create_with_params(bool reverb, bool simulate_frequency_response, bool suppress_opening_silence,
+	int end_silence_seconds)
 {
-	return new Psf(IOP_COMPAT_FRIENDLY, reverb, do_filter, suppressEndSilence,
-		suppressOpeningSilence, endSilenceSeconds);
+	PsfFlags flags = PsfDefaults;
+	if (reverb == false) {
+		flags = flags | NoReverb;
+	}
+	if (simulate_frequency_response == false) {
+		flags = flags | NoSimulateFrequencyResponse;
+	}
+	if (suppress_opening_silence == true) {
+		flags = flags | SuppressOpeningSilence;
+	}
+
+	return new Psf(flags, end_silence_seconds);
 }
 
 PSF* openpsf_create()
 {
-	return openpsf_create_with_params(true, true, true, true, 5);
+	return new Psf();
 }
 
 void openpsf_destroy(PSF* self)
@@ -66,12 +76,12 @@ bool openpsf_rewind(PSF* self)
 	return instance(self)->rewind();
 }
 
-int openpsf_get_length(PSF* self)
+int openpsf_get_sample_count(PSF* self)
 {
 	if (self == nullptr) {
 		return 0;
 	}
-	return instance(self)->get_length();
+	return instance(self)->get_sample_count();
 }
 
 int openpsf_get_sample_rate(PSF* self)
