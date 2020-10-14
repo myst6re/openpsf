@@ -71,6 +71,10 @@ public:
 	DLLEXPORT virtual ~Psf();
 	DLLEXPORT void close() noexcept;
 	DLLEXPORT bool open(const char* p_path, bool infinite = false, int default_length = 170000, int default_fade = 10000);
+	/*
+	 * Decode sample_count samples, maximum 1024.
+	 * Set data to nullptr to seek forward.
+	 */
 	DLLEXPORT int decode(int16_t* data, int sample_count);
 	DLLEXPORT bool rewind() noexcept;
 	DLLEXPORT int get_sample_count() const noexcept;
