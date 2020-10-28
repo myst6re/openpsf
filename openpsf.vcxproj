@@ -269,16 +269,26 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="akao.cpp" />
     <ClCompile Include="circular_buffer.cpp" />
+    <ClCompile Include="environment.cpp" />
     <ClCompile Include="openpsf_c.cpp" />
     <ClCompile Include="openpsf.cpp" />
-    <ClCompile Include="PSXFilter.cpp" />
+    <ClCompile Include="environment_psx.cpp" />
+    <ClCompile Include="psx_filter.cpp" />
+    <ClCompile Include="source.cpp" />
+    <ClCompile Include="source_psf.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="akao.h" />
     <ClInclude Include="circular_buffer.h" />
+    <ClInclude Include="environment.h" />
     <ClInclude Include="openpsf_c.h" />
     <ClInclude Include="openpsf.h" />
-    <ClInclude Include="PSXFilter.h" />
+    <ClInclude Include="environment_psx.h" />
+    <ClInclude Include="psx_filter.h" />
+    <ClInclude Include="source.h" />
+    <ClInclude Include="source_psf.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\highly_experimental\Core\PSXCore.vcxproj">
@@ -290,6 +300,9 @@
     <ProjectReference Include="..\zlib\zlib.vcxproj">
       <Project>{b91fdb47-3784-46cc-b23f-e863b60e87d4}</Project>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="README.md" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
