@@ -283,6 +283,8 @@
     <ClInclude Include="akao.h" />
     <ClInclude Include="circular_buffer.h" />
     <ClInclude Include="environment.h" />
+    <ClInclude Include="include\LIBSND.H" />
+    <ClInclude Include="include\LIBSPU.H" />
     <ClInclude Include="openpsf_c.h" />
     <ClInclude Include="openpsf.h" />
     <ClInclude Include="environment_psx.h" />

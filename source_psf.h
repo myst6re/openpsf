@@ -30,9 +30,9 @@ public:
 	inline bool can_decode() const noexcept override {
 		return _psx->can_execute();
 	}
-	int decode(int16_t* buffer, uint16_t max_samples) noexcept override;
+	int32_t decode(int16_t* buffer, uint16_t max_samples) noexcept override;
 	inline const char* last_error() const noexcept override {
-		return _last_error;
+		return _last_error == nullptr ? _psx->last_error() : _last_error;
 	}
 	inline const char* last_status() const noexcept override {
 		return _last_status.c_str();

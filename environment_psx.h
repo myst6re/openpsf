@@ -35,7 +35,7 @@ public:
 	inline bool can_execute() const noexcept override {
 		return !_eof;
 	}
-	int execute(int16_t* buffer, uint16_t max_samples) noexcept override;
+	int32_t execute(int16_t* buffer, uint16_t max_samples) noexcept override;
 	inline const char* last_error() const noexcept override {
 		return _last_error;
 	}

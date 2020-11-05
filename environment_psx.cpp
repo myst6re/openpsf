@@ -102,6 +102,7 @@ void EnvironmentPsx::reset(uint8_t version) noexcept
 bool EnvironmentPsx::ps1_upload_memory(const uint8_t* exe, size_t exe_size) noexcept
 {
 	if (exe_size < 0x800) {
+		_last_error = "Exe too short";
 		return false;
 	}
 
@@ -111,6 +112,7 @@ bool EnvironmentPsx::ps1_upload_memory(const uint8_t* exe, size_t exe_size) noex
 
 	addr &= 0x1fffff;
 	if (addr < 0x10000 || size > 0x1f0000 || addr + size > 0x200000) {
+		_last_error = "Invalid exe";
 		return false;
 	}
 
@@ -122,6 +124,7 @@ bool EnvironmentPsx::ps1_upload_memory(const uint8_t* exe, size_t exe_size) noex
 
 bool EnvironmentPsx::ps1_upload_psexe(const uint8_t* exe, size_t exe_size) noexcept
 {
+	_last_error = "";
 	return psx_upload_psxexe(_psx_state, const_cast<uint8_t*>(exe), exe_size) >= 0;
 }
 
@@ -130,7 +133,7 @@ void EnvironmentPsx::ps2_set_readfile(psx_readfile_t callback, void* context) no
 	psx_set_readfile(_psx_state, callback, context);
 }
 
-int EnvironmentPsx::execute(int16_t* buffer, uint16_t max_samples) noexcept
+int32_t EnvironmentPsx::execute(int16_t* buffer, uint16_t max_samples) noexcept
 {
 	if (_eof || max_samples == 0) {
 		return 0;
@@ -144,12 +147,12 @@ int EnvironmentPsx::execute(int16_t* buffer, uint16_t max_samples) noexcept
 	uint32_t samples = max_samples;
 	const int err = psx_execute(_psx_state, 0x7FFFFFFF, buffer, &samples, 0);
 	if (err <= -2) {
-		_last_error = "PSX unrecoverable error (opening silence)";
+		_last_error = "PSX unrecoverable error";
 		return -1;
 	}
 	if (-1 == err || 0 == samples) {
 		_eof = true;
 	}
 
-	return static_cast<int>(samples);
+	return static_cast<int32_t>(samples);
 }

@@ -297,11 +297,18 @@ bool SourcePsf::close() noexcept
 	return true;
 }
 
-int SourcePsf::decode(int16_t* buffer, uint16_t max_samples) noexcept
+int32_t SourcePsf::decode(int16_t* buffer, uint16_t max_samples) noexcept
 {
 	if (!_is_open) {
+		_last_error = "No opened";
 		return -1;
 	}
 
-	return _psx->execute(buffer, max_samples);
+	const int32_t read = _psx->execute(buffer, max_samples);
+
+	if (read < 0) {
+		_last_error = nullptr; // Force psx last error
+	}
+
+	return read;
 }
