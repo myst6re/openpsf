@@ -63,9 +63,63 @@ bool Akao::open(const char* path) noexcept
 	return true;
 }
 
+#define OPCODE_ADSR_UPDATE(name, upd_flags) \
+	const uint8_t param = data[1]; \
+	playerTrack.update_flags |= upd_flags; \
+	playerTrack.name = param; \
+	if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) { \
+		_channels[playerTrack.overlay_voice_num].playerTrack.name = param; \
+	}
+
+int32_t AkaoExec::getVoicesBits(AkaoChannelState* _channels, int32_t voice_bit, int32_t mask)
+{
+	int i = 1;
+	channel_t channel = 0;
+
+	voice_bit |= mask;
+
+	while (mask != 0) {
+		if (mask & i != 0) {
+			int32_t mask2 = 0;
+
+			if (_channels[channel].playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
+				uint32_t overlay_voice_num = _channels[channel].playerTrack.overlay_voice_num;
+				if (overlay_voice_num >= 24) {
+					overlay_voice_num -= 24;
+				}
+				mask2 = 1 << overlay_voice_num;
+			}
+			else if (_channels[channel].playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::AlternateVoiceEnabled) {
+				mask2 = 1 << _channels[channel].playerTrack.alternate_voice_num;
+			}
+
+			if (mask & mask2) {
+				voice_bit |= mask2;
+			}
+			mask ^= i;
+		}
+		i <<= 1;
+	}
+
+	return voice_bit;
+}
+
 void AkaoExec::spuNoiseVoice()
 {
-	// TODO
+	int32_t voice_bit = 0, mask = _unknown9A190 & _unknown62F68 & ~(_unknown99FCC | _unknown62F00);
+	if (mask) {
+		voice_bit = getVoicesBits(_channels2, voice_bit, mask);
+	}
+	mask = ~(_unknown62F68 | _unknown99FCC | _unknown62F00) & _unknown9A130;
+	if (mask) {
+		voice_bit = getVoicesBits(_channels, voice_bit, mask);
+	}
+
+	voice_bit |= _noise_voices;
+
+	// SPU_BIT could be used instead
+	voice_bit = SpuSetNoiseVoice(SPU_ON, voice_bit);
+	voice_bit = SpuSetNoiseVoice(SPU_OFF, voice_bit ^ 0xFFFFFFFF);
 }
 
 void AkaoExec::spuReverbVoice()
@@ -183,6 +237,16 @@ void AkaoExec::akaoSetInstrument(AkaoPlayerTrack& playerTrack, uint8_t instrumen
 	playerTrack.update_flags |= 0x1FF80;
 }
 
+void AkaoExec::adsrDecayRate(const uint8_t *data, AkaoPlayerTrack& playerTrack)
+{
+	OPCODE_ADSR_UPDATE(adsr_decay_rate, 0x1000);
+}
+
+void AkaoExec::adsrSustainLevel(const uint8_t* data, AkaoPlayerTrack& playerTrack)
+{
+	OPCODE_ADSR_UPDATE(adsr_sustain_level, 0x8000);
+}
+
 void AkaoExec::turnOnReverb(AkaoPlayerTrack& playerTrack, int argument2)
 {
 	if (playerTrack.use_global_track == 0) {
@@ -292,6 +356,13 @@ void AkaoExec::turnOnOverlayVoice(const uint8_t* data, AkaoPlayerTrack& playerTr
 	name##_slide_length = length; \
 	name##_slope = (param - name) / length;
 
+#define OPCODE_SLIDE_U32(name, shift) \
+	const uint16_t length = data[1] == 0 ? 256 : data[1]; \
+	const uint32_t param = data[2] << shift; \
+	name##_slide_length = length; \
+	name &= 0xFFFF0000; \
+	name##_slope = (param - name) / length;
+
 #define OPCODE_SLIDE(name) \
 	const uint16_t length = data[1] == 0 ? 256 : data[1]; \
 	const uint32_t param = (data[3] << 24) | (data[2] << 16); \
@@ -325,10 +396,10 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		}
 
 		switch (op) {
-		case 0xA0:
+		case 0xA0: // Finished
 			finishChannel(playerTrack, argument2);
-			return -1; // Finished
-		case 0xA1:
+			return -1;
+		case 0xA1: // Load Instrument
 			if (!loadInstrument(data, playerTrack, argument2)) {
 				return -2;
 			}
@@ -346,7 +417,10 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			playerTrack.master_volume = uint32_t(master_volume);
 			break;
 		case 0xA4: // Pitch Bend Slide
-			// TODO
+			const uint8_t length = data[1] == 0 ? 256 : data[1];
+			const int8_t amount = data[2];
+			playerTrack.pitch_slide_length = length;
+			playerTrack.pitch_slide_amount = amount;
 			break;
 		case 0xA5: // Set Octave
 			const uint8_t octave = data[1];
@@ -360,12 +434,12 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			break;
 		case 0xA8: // Channel Volume
 			const uint8_t volume = data[1];
-			playerTrack.volume_slide_length_counter = 0;
+			playerTrack.volume_slide_length = 0;
 			playerTrack.update_flags |= 0x3;
 			playerTrack.volume = uint32_t(volume) << 23;
 			break;
 		case 0xA9: // Channel Volume Slide
-			// TODO
+			OPCODE_SLIDE_U32(playerTrack.volume, 23);
 			break;
 		case 0xAA: // Set Channel Pan
 			const uint8_t pan = data[1];
@@ -374,37 +448,130 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			playerTrack.pan = pan << 8;
 			break;
 		case 0xAB: // Set Channel Pan Slide
-			// TODO
+			OPCODE_SLIDE_U16(playerTrack.pan, 8);
 			break;
 		case 0xAC: // Noise Clock Frequency
-			// TODO
+			const uint8_t noise_clock = data[1];
+			if (playerTrack.use_global_track == 0) {
+				if (noise_clock & 0xC0) {
+					_player.noise_clock = (_player.noise_clock + (noise_clock & 0x3F)) & 0x3F;
+				}
+				else {
+					_player.noise_clock = noise_clock;
+				}
+			}
+			else if (noise_clock & 0xC0) {
+				_noise_clock = (_noise_clock + (noise_clock & 0x3F)) & 0x3F;
+			}
+			else {
+				_noise_clock = noise_clock;
+			}
+			_player.spucnt |= 0x10;
 			break;
-		case 0xAD:
+		case 0xAD: // ADSR Attack Rate
+			OPCODE_ADSR_UPDATE(adsr_attack_rate, 0x900);
 			break;
-		case 0xAE:
+		case 0xAE: // ADSR Decay Rate
+			adsrDecayRate(data, playerTrack);
 			break;
-		case 0xAF:
+		case 0xAF: // ADSR Sustain Level
+			adsrSustainLevel(data, playerTrack);
 			break;
-		case 0xB0:
+		case 0xB0: // ADSR Decay Rate and Sustain Level
+			adsrDecayRate(data, playerTrack);
+			adsrSustainLevel(data, playerTrack);
 			break;
-		case 0xB1:
+		case 0xB1: // ADSR Sustain Rate
+			OPCODE_ADSR_UPDATE(adsr_sustain_rate, 0x2200);
 			break;
-		case 0xB2:
+		case 0xB2: // ADSR Release Rate
+			OPCODE_ADSR_UPDATE(adsr_release_rate, 0x4400);
 			break;
-		case 0xB3:
+		case 0xB3: // ADSR Reset
+			const AkaoInstrumentAttr& instr = _instruments[playerTrack.instrument];
+			playerTrack.adsr_attack_rate = instr.adsr_attack_rate;
+			playerTrack.adsr_decay_rate = instr.adsr_decay_rate;
+			playerTrack.adsr_sustain_level = instr.adsr_sustain_level;
+			playerTrack.adsr_sustain_rate = instr.adsr_sustain_rate;
+			playerTrack.adsr_release_rate = instr.adsr_release_rate;
+			playerTrack.adsr_attack_mode = instr.adsr_attack_mode;
+			playerTrack.adsr_sustain_mode = instr.adsr_sustain_mode;
+			playerTrack.adsr_release_mode = instr.adsr_release_mode;
+			playerTrack.update_flags |= 0xFF00;
+			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
+				AkaoPlayerTrack &otherTrack = _channels[playerTrack.overlay_voice_num].playerTrack;
+				otherTrack.adsr_attack_rate = instr.adsr_attack_rate;
+				otherTrack.adsr_decay_rate = instr.adsr_decay_rate;
+				otherTrack.adsr_sustain_level = instr.adsr_sustain_level;
+				otherTrack.adsr_sustain_rate = instr.adsr_sustain_rate;
+				otherTrack.adsr_release_rate = instr.adsr_release_rate;
+				otherTrack.adsr_attack_mode = instr.adsr_attack_mode;
+				otherTrack.adsr_sustain_mode = instr.adsr_sustain_mode;
+				otherTrack.adsr_release_mode = instr.adsr_release_mode;
+			}
 			break;
-		case 0xB4:
+		case 0xB4: // Vibrato Channel Pitch LFO
+			const uint8_t depth_or_delay = data[1];
+			const uint8_t rate = data[2] == 0 ? 256 : data[2];
+			const uint8_t form = data[3];
+			playerTrack.voice_effect_flags |= AkaoVoiceEffectFlags::VibratoEnabled;
+			if (playerTrack.use_global_track != 0) {
+				playerTrack.vibrato_delay = 0;
+				if (depth_or_delay != 0) {
+					playerTrack.vibrato_depth = depth_or_delay << 8;
+				}
+			}
+			else {
+				playerTrack.vibrato_delay = depth_or_delay;
+			}
+			playerTrack.vibrato_rate = rate;
+			playerTrack.vibrato_form = form;
+			playerTrack.vibrato_delay_counter = playerTrack.vibrato_delay;
+			playerTrack.vibrato_rate_counter = 1;
+			playerTrack.vibrato_lfo_addr = _pan_lfo_addrs[form];
+
+			const uint8_t depth = playerTrack.vibrato_depth >> 8;
+
+			playerTrack.vibrato_max_amplitude = ((depth & 0x7F) * (depth & 0x80 != 0
+				? playerTrack.pitch_of_note
+				: (((playerTrack.pitch_of_note << 4) - playerTrack.pitch_of_note) >> 8)
+				)) >> 7;
 			break;
-		case 0xB5:
+		case 0xB5: // Vibrato Depth
+			const uint8_t depth = data[1];
+			playerTrack.vibrato_depth = depth << 8;
+			playerTrack.vibrato_max_amplitude = ((depth & 0x7F) * (depth & 0x80 != 0
+				? playerTrack.pitch_of_note
+				: (((playerTrack.pitch_of_note << 4) - playerTrack.pitch_of_note) >> 8)
+				)) >> 7;
 			break;
 		case 0xB6: // Turn Off Vibrato
 			playerTrack.vibrato_lfo_amplitude = 0;
 			playerTrack.voice_effect_flags &= ~AkaoVoiceEffectFlags::VibratoEnabled;
 			playerTrack.update_flags |= 0x10;
 			break;
-		case 0xB7:
+		case 0xB7: // ADSR Attack Mode
+			OPCODE_ADSR_UPDATE(adsr_attack_mode, 0x100);
 			break;
-		case 0xB8:
+		case 0xB8: // Tremolo Channel Volume LFO
+			const uint8_t depth_or_delay = data[1];
+			const uint8_t rate = data[2] == 0 ? 256 : data[2];
+			const uint8_t form = data[3];
+			playerTrack.voice_effect_flags |= AkaoVoiceEffectFlags::TremoloEnabled;
+			if (playerTrack.use_global_track != 0) {
+				playerTrack.tremolo_delay = 0;
+				if (depth_or_delay != 0) {
+					playerTrack.tremolo_depth = depth_or_delay << 8;
+				}
+			}
+			else {
+				playerTrack.tremolo_delay = depth_or_delay;
+			}
+			playerTrack.tremolo_rate = rate;
+			playerTrack.tremolo_form = form;
+			playerTrack.tremolo_delay_counter = playerTrack.tremolo_delay;
+			playerTrack.tremolo_rate_counter = 1;
+			playerTrack.tremolo_lfo_addr = _pan_lfo_addrs[form];
 			break;
 		case 0xB9: // Tremolo Depth
 			const uint8_t tremolo_depth = data[1];
@@ -457,22 +624,22 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			const int8_t relative = int8_t(data[1]);
 			playerTrack.transpose += relative;
 			break;
-		case 0xC2:
+		case 0xC2: // Turn On Reverb
 			turnOnReverb(playerTrack, argument2);
 			break;
-		case 0xC3:
+		case 0xC3: // Turn Off Reverb
 			turnOffReverb(playerTrack, argument2);
 			break;
-		case 0xC4:
+		case 0xC4: // Turn On Noise
 			turnOnNoise(playerTrack, argument2);
 			break;
-		case 0xC5:
+		case 0xC5: // Turn Off Noise
 			turnOffNoise(playerTrack, argument2);
 			break;
-		case 0xC6:
+		case 0xC6: // Turn On Frequency Modulation
 			turnOnFrequencyModulation(playerTrack, argument2);
 			break;
-		case 0xC7:
+		case 0xC7: // Turn Off Frequency Modulation
 			turnOffFrequencyModulation(playerTrack, argument2);
 			break;
 		case 0xC8: // Loop Point
@@ -507,8 +674,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xCC: // Turn On Legato
 			playerTrack.legato_flags = 0x1;
 			break;
-		case 0xCD:
-			// Do nothing
+		case 0xCD: // Do nothing
 			break;
 		case 0xCE: // Turn On Noise and Toggle Noise On/Off after a Period of Time
 			OPCODE_UPDATE_DELAY_COUNTER(noise);
@@ -520,8 +686,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xD0: // Turn On Full-Length Note Mode (?)
 			playerTrack.legato_flags = 0x4;
 			break;
-		case 0xD1:
-			// Do nothing
+		case 0xD1: // Do nothing
 			break;
 		case 0xD2: // Toggle Freq Modulation Later and Turn On Frequency Modulation
 			OPCODE_UPDATE_DELAY_COUNTER(pitchmod);
@@ -592,9 +757,9 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xE4:
 		case 0xE5:
 		case 0xE6:
-		case 0xE7:
+		case 0xE7: // Unused
 			finishChannel(playerTrack, argument2);
-			return -1; // Unused
+			return -1;
 		case 0xE8: // Tempo
 			const uint8_t tempo = (data[2] << 24) | (data[1] << 16);
 			_player.tempo_slide_length = 0;
@@ -679,7 +844,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 				playerTrack.update_flags |= 0x1FF80;
 			}
 			break;
-		case 0xF3:
+		case 0xF3: // Set field 54
 			_player.field_54 = 1;
 			break;
 		case 0xF4: // Turn On Overlay Voice
@@ -735,9 +900,9 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			break;
 		case 0xFA:
 		case 0xFB:
-		case 0xFC:
+		case 0xFC: // Unused
 			finishChannel(playerTrack, argument2);
-			return -1; // Unused
+			return -1;
 		case 0xFD: // Time signature
 			_player.ticks_per_beat = data[1];
 			_player.tick = 0;
@@ -747,9 +912,9 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xFE: // Measure number
 			_player.measure = (uint16_t(data[2]) << 8) | uint16_t(data[1]);
 			break;
-		case 0xFF:
+		case 0xFF: // Unused
 			finishChannel(playerTrack, argument2);
-			return -1; // Unused
+			return -1;
 		}
 
 		return playerTrack.addr + opcode_len;

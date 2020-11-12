@@ -133,13 +133,28 @@ AkaoVoiceEffectFlags operator~(AkaoVoiceEffectFlags flags) noexcept {
 	return static_cast<AkaoVoiceEffectFlags>(~static_cast<uint32_t>(flags));
 }
 
-struct AkaoPlayerTrack // 0x80096608, size = 0x108
+enum class AkaoUpdateFlags : uint32_t {
+	None = 0x0000,
+	VolumeRelated1 = 0x0001,
+	VolumeRelated2 = 0x0002,
+	Unknown4 = 0x0004,
+	Unknown8 = 0x0008,
+	VibratoRelated = 0x0010,
+	Unknown20 = 0x0020,
+	Unknown40 = 0x0040,
+	Unknown80 = 0x0080,
+	AdsrAttackModeRelated = 0x0100,
+	AdsrSustainModeRelated = 0x0200,
+	AdsrReleaseModeRelated = 0x0400,
+};
+
+struct AkaoPlayerTrack // 0x96608, size = 0x108
 {
 	uint32_t addr;                                    // 0x00
 	uint32_t loop_addrs[4];                           // 0x04
 	const AkaoDrumKeyAttr* drum_addr;                 // 0x14
-	int16_t* vibrato_lfo_addr;                        // 0x18
-	int16_t* tremolo_lfo_addr;                        // 0x1c
+	uint32_t vibrato_lfo_addr;                        // 0x18
+	uint32_t tremolo_lfo_addr;                        // 0x1c
 	uint32_t pan_lfo_addr;                            // 0x20
 	uint32_t overlay_voice_num;                       // 0x24
 	uint32_t alternate_voice_num;                     // 0x28
@@ -160,7 +175,7 @@ struct AkaoPlayerTrack // 0x80096608, size = 0x108
 	uint8_t gate_time_counter;                        // 0x57
 	uint16_t instrument;                              // 0x58
 	uint16_t field_5A;                                // 0x5a
-	uint16_t volume_slide_length_counter;             // 0x5c
+	uint16_t volume_slide_length;                     // 0x5c
 	uint16_t overlay_balance_slide_length;            // 0x5e
 	uint16_t pan;                                     // 0x60
 	uint16_t pan_slide_length;                        // 0x62
@@ -230,7 +245,7 @@ struct AkaoPlayerTrack // 0x80096608, size = 0x108
 	uint32_t volume;                                  // 0x104: volume (left and right)
 };
 
-struct AkaoInstrumentAttr // 0x80075F28
+struct AkaoInstrumentAttr // 0x75F28
 {
 	/* offsets */
 	uint32_t addr;              // 0x00: offset to attack part of instrument (SPU hardware address)
@@ -267,23 +282,32 @@ private:
 	static uint8_t _opcode_len[0x60];
 	static uint32_t _pan_lfo_addrs[PAN_LFO_ADDRS_LEN]; // 0x4A5CC
 	AkaoPlayer _player;
-	AkaoChannelState _channels[AKAO_CHANNEL_MAX];
-	AkaoInstrumentAttr _instruments[256];
+	AkaoChannelState _channels[AKAO_CHANNEL_MAX]; // 0x96608
+	AkaoChannelState _channels2[AKAO_CHANNEL_MAX]; // 0x97EC8
+	AkaoInstrumentAttr _instruments[256]; // 0x75F28
+	int32_t _unknown62F00;
 	uint32_t _unknown62F04;
+	int32_t _unknown62F68;
 	int32_t _unknown99FCC;
 	int32_t _noise_voices; // 0x9FEC
 	int32_t _reverb_voices; // 0x9FF0
 	int32_t _pitch_lfo_voices; // 0x9FF4
+	int16_t _noise_clock; // 0x9FFA
 	int32_t _unknown9A10C;
 	int32_t _unknown9A110;
 	int32_t _unknown9A114;
+	int32_t _unknown9A130;
+	int32_t _unknown9A190;
 	const Akao& _akao;
+	int32_t getVoicesBits(AkaoChannelState* _channels, int32_t voice_bit, int32_t mask);
 	void spuNoiseVoice();
 	void spuReverbVoice();
 	void spuPitchLFOVoice();
-	void akaoSetInstrument(AkaoPlayerTrack& playerTrack, uint8_t instrument);
-	bool loadInstrument(const uint8_t* data, AkaoPlayerTrack& playerTrack, int argument2);
 	void finishChannel(AkaoPlayerTrack& playerTrack, int argument2);
+	bool loadInstrument(const uint8_t* data, AkaoPlayerTrack& playerTrack, int argument2);
+	void akaoSetInstrument(AkaoPlayerTrack& playerTrack, uint8_t instrument);
+	void adsrDecayRate(const uint8_t* data, AkaoPlayerTrack& playerTrack);
+	void adsrSustainLevel(const uint8_t* data, AkaoPlayerTrack& playerTrack);
 	void turnOnReverb(AkaoPlayerTrack& playerTrack, int argument2);
 	void turnOffReverb(AkaoPlayerTrack& playerTrack, int argument2);
 	void turnOnNoise(AkaoPlayerTrack& playerTrack, int argument2);
