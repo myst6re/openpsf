@@ -1,13 +1,13 @@
-#include "akao.h"
+#include "akao_instr.h"
 
-Akao::~Akao() noexcept
+AkaoInstrAdpcm::~AkaoInstrAdpcm() noexcept
 {
 	if (_data != nullptr) {
 		delete[] _data;
 	}
 }
 
-bool Akao::setDataSize(uint16_t data_size) noexcept
+bool AkaoInstrAdpcm::setDataSize(uint16_t data_size) noexcept
 {
 	if (_data != nullptr) {
 		delete[] _data;
