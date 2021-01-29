@@ -6,7 +6,7 @@
 	playerTrack.update_flags |= upd_flags; \
 	playerTrack.name = param; \
 	if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) { \
-		_channels[playerTrack.overlay_voice_num].playerTrack.name = param; \
+		_playerTracks[playerTrack.overlay_voice_num].name = param; \
 	}
 
 AkaoExec::AkaoExec(const Akao& akao, bool loadInstruments2) noexcept :
@@ -19,9 +19,9 @@ AkaoExec::AkaoExec(const Akao& akao, bool loadInstruments2) noexcept :
 	if (loadInstruments2) {
 		akaoLoadInstrumentSet2(0x80168000, 0x801A6000);
 	}
-	_akaoMessage = 0x10; // Load and play AKAO
+	/* _akaoMessage = 0x10; // Load and play AKAO
 	_akaoDataAddr = 0x801D0000;
-	akaoPostMessage();
+	akaoPostMessage(); */
 }
 
 void AkaoExec::resetCallback()
@@ -42,21 +42,26 @@ long AkaoExec::akaoTimerCallback()
 		_previous_time_elapsed = 0;
 	}
 
-	uint32_t unknown2 = (uint64_t(time_elapsed - _previous_time_elapsed) * uint64_t(0x3E0F83E1)) >> 36;
+	uint32_t loop_count = (time_elapsed - _previous_time_elapsed) / 66;
 
-	if (uint16_t(unknown2) == 0 || uint16_t(unknown2) >= 9) {
-		unknown2 = 1;
+	if (loop_count == 0 || loop_count >= 9) {
+		loop_count = 1;
 	}
 
 	_previous_time_elapsed = time_elapsed;
 
 	if (_unknown62FF8 & 0x4) {
-		unknown2 <<= 1;
+		loop_count *= 2;
 	}
 
-	while (unknown2 & 0xFFFF) {
-		akaoMain();
-		unknown2 -= 1;
+	bool error = false;
+
+	while (loop_count) {
+		if (!akaoMain()) {
+			error = true;
+			break;
+		}
+		loop_count -= 1;
 	}
 
 	int32_t root_counter_2 = GetRCnt(RCntCNT2);
@@ -80,7 +85,132 @@ void AkaoExec::akaoDspMain()
 	// TODO
 }
 
-void AkaoExec::akaoDspOnTick(AkaoPlayerTrack* playerTracks, const AkaoPlayer& player, uint32_t voice)
+void AkaoExec::akaoDspOnTick(AkaoPlayerTrack& playerTracks, AkaoPlayer& player, uint32_t voice)
+{
+	if (playerTracks.volume_slide_length != 0) {
+		const uint32_t volume = playerTracks.volume, newVolume = playerTracks.volume_slope + volume;
+		playerTracks.volume_slide_length -= 1;
+		if (newVolume & 0xFFE00000 != volume & 0xFFE00000) {
+			playerTracks.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+		}
+		playerTracks.volume = newVolume;
+	}
+
+	if (playerTracks.overlay_balance_slide_length != 0) {
+		const uint32_t balance = playerTracks.overlay_balance, newBalance = playerTracks.overlay_balance_slope + balance;
+		playerTracks.overlay_balance_slide_length -= 1;
+		if (playerTracks.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled
+			&& newBalance & 0xFF00 != balance & 0xFF00) {
+			playerTracks.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+		}
+		playerTracks.overlay_balance = newBalance;
+	}
+
+	if (playerTracks.pan_slide_length != 0) {
+		const uint32_t pan = playerTracks.pan, newPan = pan + playerTracks.pan_slope;
+		playerTracks.pan_slide_length -= 1;
+		if (newPan & 0xFF00 != pan & 0xFF00) {
+			playerTracks.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+		}
+		playerTracks.pan = newPan;
+	}
+
+	if (playerTracks.vibrato_delay_counter != 0) {
+		playerTracks.vibrato_delay_counter -= 1;
+	}
+
+	if (playerTracks.tremolo_delay_counter != 0) {
+		playerTracks.tremolo_delay_counter -= 1;
+	}
+
+	if (playerTracks.noise_on_off_delay_counter != 0) {
+		playerTracks.noise_on_off_delay_counter -= 1;
+		if (playerTracks.noise_on_off_delay_counter == 0) {
+			player.noise_voices ^= voice;
+			player.spucnt |= 0x10;
+			spuNoiseVoice();
+		}
+	}
+
+	if (playerTracks.pitchmod_on_off_delay_counter != 0) {
+		playerTracks.pitchmod_on_off_delay_counter -= 1;
+		if (playerTracks.pitchmod_on_off_delay_counter == 0) {
+			player.pitch_lfo_voices ^= voice;
+			spuPitchLFOVoice();
+		}
+	}
+
+	if (playerTracks.vibrato_depth_slide_length != 0) {
+		const uint16_t newVibratoDepth = playerTracks.vibrato_depth + playerTracks.vibrato_depth_slope;
+		playerTracks.vibrato_depth_slide_length -= 1;
+		playerTracks.vibrato_depth = newVibratoDepth;
+		const uint32_t argument0 = (newVibratoDepth & 0x7F00) >> 8;
+		const uint32_t vibratoMaxAmplitude = newVibratoDepth & 0x8000 ? playerTracks.pitch_of_note : ((playerTracks.pitch_of_note << 4) - playerTracks.pitch_of_note) >> 8;
+		playerTracks.vibrato_max_amplitude = argument0 * (vibratoMaxAmplitude >> 7);
+		if (playerTracks.vibrato_delay_counter == 0) {
+			if (playerTracks.vibrato_rate_counter != 1) {
+				if (*((uint32_t*)playerTracks.vibrato_lfo_addr) == 0) {
+					playerTracks.vibrato_lfo_addr += *((uint16_t*)(playerTracks.vibrato_lfo_addr + 4)) * 2;
+				}
+				const int16_t amplitude = (playerTracks.vibrato_max_amplitude * (*((uint16_t*)playerTracks.vibrato_lfo_addr))) >> 16;
+				if (amplitude != playerTracks.vibrato_lfo_amplitude) {
+					playerTracks.vibrato_lfo_amplitude = amplitude;
+					playerTracks.update_flags |= AkaoUpdateFlags::VoicePitch;
+					if (amplitude >= 0) {
+						playerTracks.vibrato_lfo_amplitude = amplitude * 2;
+					}
+				}
+			}
+		}
+	}
+
+	if (playerTracks.tremolo_depth_slide_length) {
+		playerTracks.tremolo_depth_slide_length -= 1;
+		playerTracks.tremolo_depth += playerTracks.tremolo_depth_slope;
+
+		if (playerTracks.tremolo_delay_counter == 0) {
+			if (playerTracks.tremolo_rate_counter != 1) {
+				if (*((uint32_t*)playerTracks.tremolo_lfo_addr) == 0) {
+					playerTracks.tremolo_lfo_addr += *((uint16_t*)(playerTracks.tremolo_lfo_addr + 4)) * 2;
+				}
+				// FIXME: load_i16(saved0 + 0x46)
+				const int16_t amplitude = ((((((playerTracks.volume >> 16) * playerTracks.master_volume) >> 7) * (playerTracks.tremolo_depth >> 8)) >> 7) * (*((uint16_t*)playerTracks.tremolo_lfo_addr))) >> 15;
+				if (amplitude != playerTracks.tremolo_lfo_amplitude) {
+					playerTracks.tremolo_lfo_amplitude = amplitude;
+					playerTracks.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+				}
+			}
+		}
+	}
+
+	if (playerTracks.pan_lfo_depth_slide_length != 0) {
+		playerTracks.pan_lfo_depth += playerTracks.pan_lfo_depth_slope;
+		playerTracks.pan_lfo_depth_slide_length -= 1;
+		if (playerTracks.pan_lfo_rate_counter != 1) {
+			playerTracks.pan_lfo_addr;
+			if (*((uint32_t*)playerTracks.pan_lfo_addr) == 0) {
+				playerTracks.pan_lfo_addr += *((uint16_t*)(playerTracks.pan_lfo_addr + 4)) * 2;
+			}
+			const int16_t amplitude = ((playerTracks.pan_lfo_depth >> 8) * (*((uint16_t*)playerTracks.pan_lfo_addr))) >> 15;
+			if (amplitude != playerTracks.pan_lfo_amplitude) {
+				playerTracks.pan_lfo_amplitude = amplitude;
+				playerTracks.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+			}
+		}
+	}
+
+	if (playerTracks.pitch_slide_length_counter != 0) {
+		const int32_t pitchBlendSlideAmplitude = playerTracks.pitch_bend_slide_amplitude,
+			newPitchBlendSlideAmplitude = pitchBlendSlideAmplitude + playerTracks.pitch_bend_slope;
+		playerTracks.pitch_slide_length_counter -= 1;
+		if (newPitchBlendSlideAmplitude & 0xFFFF0000 != pitchBlendSlideAmplitude & 0xFFFF0000) {
+			playerTracks.update_flags |= AkaoUpdateFlags::VoicePitch;
+		}
+		playerTracks.pitch_bend_slide_amplitude = newPitchBlendSlideAmplitude;
+	}
+}
+
+void AkaoExec::akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice)
 {
 	// TODO
 	spuNoiseVoice();
@@ -89,16 +219,134 @@ void AkaoExec::akaoDspOnTick(AkaoPlayerTrack* playerTracks, const AkaoPlayer& pl
 	// TODO
 }
 
-void AkaoExec::akaoUnknown2E954(AkaoPlayerTrack* playerTracks, uint32_t voice)
+void AkaoExec::akaoWriteSpuRegisters(int32_t voice, SpuRegisters &spuRegisters)
 {
-	// TODO
-	spuNoiseVoice();
-	// TODO
-	spuPitchLFOVoice();
-	// TODO
+	if (spuRegisters.update_flags & AkaoUpdateFlags::VoicePitch) {
+		SpuSetVoicePitch(voice, spuRegisters.voice_pitch);
+		spuRegisters.update_flags &= ~AkaoUpdateFlags::VoicePitch;
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & (AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight)) {
+		SpuSetVoiceVolume(voice, spuRegisters.volume_left, spuRegisters.volume_right);
+		spuRegisters.update_flags &= ~(AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight);
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & AkaoUpdateFlags::VoiceStartAddr) {
+		SpuSetVoiceStartAddr(voice, spuRegisters.voice_start_addr);
+		spuRegisters.update_flags &= ~AkaoUpdateFlags::VoiceStartAddr;
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & AkaoUpdateFlags::VoiceLoopStartAddr) {
+		SpuSetVoiceLoopStartAddr(voice, spuRegisters.voice_loop_start_addr);
+		spuRegisters.update_flags &= ~AkaoUpdateFlags::VoiceLoopStartAddr;
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & (AkaoUpdateFlags::AdsrSustainMode | AkaoUpdateFlags::AdsrSustainRate)) {
+		SpuSetVoiceSRAttr(voice, spuRegisters.adsr_sustain_rate, spuRegisters.adsr_sustain_rate_mode);
+		spuRegisters.update_flags &= ~(AkaoUpdateFlags::AdsrSustainMode | AkaoUpdateFlags::AdsrSustainRate);
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & (AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrAttackRate)) {
+		SpuSetVoiceARAttr(voice, spuRegisters.adsr_attack_rate, spuRegisters.adsr_attack_rate_mode);
+		spuRegisters.update_flags &= ~(AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrAttackRate);
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & (AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrReleaseRate)) {
+		SpuSetVoiceRRAttr(voice, spuRegisters.adsr_release_rate, spuRegisters.adsr_release_rate_mode);
+		spuRegisters.update_flags &= ~(AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrReleaseRate);
+
+		if (spuRegisters.update_flags == AkaoUpdateFlags::None) {
+			return;
+		}
+	}
+
+	if (spuRegisters.update_flags & (AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainLevel)) {
+		SpuSetVoiceDR(voice, spuRegisters.adsr_decay_rate);
+		SpuSetVoiceSL(voice, spuRegisters.adsr_sustain_level);
+		spuRegisters.update_flags &= ~(AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainLevel);
+	}
 }
 
-void AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTrack, const AkaoPlayer &player, uint32_t voice)
+void AkaoExec::akaoPlayMusic()
+{
+	AkaoTransferSeqBody(_akao);
+	if (_player.song_id == 14)
+	{
+		sub_8002A7E8();
+		sub_8002B1A8(_akaoPlayerTracks, dword_800804D0, &_player, &dword_80083394);
+	}
+	sub_80029E98();
+	if (_unknown_song_id_8337E != 0 && _unknown_song_id_8337E == _akao.songId()) {
+		sub_8002AABC(0);
+	}
+	else if (_unknown_song_id_833DE != 0 && _unknown_song_id_833DE == _akao.songId()) {
+		sub_8002AABC(1);
+	}
+	else {
+		AkaoLoadTracks();
+	}
+	_player.song_id = _akao.songId();
+}
+
+void AkaoExec::akaoPause()
+{
+	if (_player.active_voices) {
+		uint32_t active_voices = (_player.active_voices | _player.overlay_voices | _player.alternate_voices) & ~(_active_voices | _spuActiveVoices);
+
+		if (active_voices) {
+			uint32_t i = 1, voice = 0;
+			_spuRegisters.volume_left = 0;
+			_spuRegisters.volume_right = 0;
+			_spuRegisters.adsr_sustain_rate = 127;
+			// FIXME where _spuRegisters.adsr_sustain_rate_mode is set?
+
+			do {
+				if (active_voices & i) {
+					_spuRegisters.update_flags = AkaoUpdateFlags::AdsrSustainRate | AkaoUpdateFlags::AdsrSustainMode
+						| AkaoUpdateFlags::VolumeRight | AkaoUpdateFlags::VolumeLeft;
+
+					akaoWriteSpuRegisters(voice, _spuRegisters);
+
+					active_voices ^= i;
+				}
+
+				i <<= 1;
+				voice += 1;
+			} while (i);
+
+			_player.saved_active_voices = _player.active_voices;
+			_player.active_voices = 0;
+		}
+	}
+
+	_unknown62FF8 |= 0x1;
+}
+
+bool AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTrack, AkaoPlayer &player, uint32_t voice)
 {
 	uint32_t cur = playerTrack.addr;
 	uint8_t instruction = 160;
@@ -117,23 +365,21 @@ void AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTra
 		return;
 	}
 
-	akaoReadNextNote(data, channel_state);
+	uint32_t note = akaoReadNextNote(data, channel_state);
 
 	if (playerTrack.forced_delta_time) {
 		playerTrack.delta_time_counter = playerTrack.forced_delta_time & 0xFF;
 		playerTrack.gate_time_counter = (playerTrack.forced_delta_time >> 8) & 0xFF;
 	}
 	if (playerTrack.delta_time_counter) {
-		// FIXME: looks strange
-		if ((160 >= 143 || 160 < 132) && !(playerTrack.legato_flags & 0x5)) {
+		if ((note >= 143 || note < 132) && !(playerTrack.legato_flags & 0x5)) {
 			playerTrack.delta_time_counter -= 2;
 		}
 	}
 	else {
 		playerTrack.delta_time_counter = _delta_times[instruction == 0 ? 0 : ((instruction - 1) % 11) + 1];
 		playerTrack.gate_time_counter = playerTrack.delta_time_counter;
-		// FIXME: looks strange
-		if (160 - 132 >= 11 && !(playerTrack.legato_flags & 0x5)) {
+		if (note - 132 >= 11 && !(playerTrack.legato_flags & 0x5)) {
 			playerTrack.delta_time_counter -= 2;
 		}
 	}
@@ -149,9 +395,9 @@ void AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTra
 		return;
 	}
 
-	if (instruction < 132) {
-		saved2 = argument0 = (instruction * 0xBA2E8BA3) >> 35;
+	uint32_t pitch;
 
+	if (instruction < 132) {
 		if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::DrumModeEnabled) {
 			if (!playerTrack.use_global_track) {
 				_player.key_on_voices |= voice;
@@ -159,9 +405,8 @@ void AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTra
 			else {
 				_key_on_voices |= voice;
 			}
-			value1 = ((saved2 & 0xFF) * 0xAAAAAAAB) >> 35;
 			const AkaoDrumKeyAttr* drum = nullptr;//playerTrack.drum + instruction; TODO
-			if (instrument != drum->instrument) {
+			if (playerTrack.instrument != drum->instrument) {
 				AkaoInstrAttr& instr = _instruments[drum->instrument];
 				playerTrack.spu_addr = instr.addr;
 				playerTrack.loop_addr = instr.loop_addr;
@@ -174,340 +419,191 @@ void AkaoExec::akaoDispatchVoice(const uint8_t *data, AkaoPlayerTrack& playerTra
 				if (!(playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::AlternateVoiceEnabled)) {
 					playerTrack.adsr_release_rate = instr.adsr_release_rate;
 					playerTrack.adsr_release_mode = instr.adsr_release_mode;
-					playerTrack.update_flags |= 0x1FF80;
+					playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+						| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+						| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+						| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+						| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+						| AkaoUpdateFlags::VoiceLoopStartAddr;
 				}
 				else {
-					playerTrack.update_flags |= 0x1BB80;
+					playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+						| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+						| AkaoUpdateFlags::AdsrAttackRate
+						| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+						| AkaoUpdateFlags::AdsrSustainLevel
+						| AkaoUpdateFlags::VoiceLoopStartAddr;
 				}
 			}
 			pitch = _instruments[drum->instrument].pitch[drum->key % 12];
+			uint8_t key_scaled = drum->key / 12;
+			if (key_scaled >= 7) {
+				pitch <<= key_scaled - 6;
+			}
+			else if (key_scaled < 6) {
+				pitch >>= 6 - key_scaled;
+			}
 			playerTrack.volume = drum->volume << 16;
 			playerTrack.pan = drum->pan << 8;
-			/*
-80031264       value1 = load_u8(argument2 + 0x1)
-800312AC       argument1 = ((value1 * 0xAAAAAAAB) >> 35) & 0xFF
-800312B4       argument0 = load_i32(0x80075F38 + (((value1 - (12 * argument1)) & 0xFF) * 4) + ((load_u8(argument2) * 64)))
-			   if u32(argument1) >= 7 then
-800312C8         argument0 <<= argument1 - 6
-800312C4       else if u32(argument1) < 6 then
-800312D8         argument0 >>= 6 - argument1
-			   end
-800312F0       store_i32(channel_state + 0x44, (load_u8(argument2 + 0x2) + (load_u8(argument2 + 0x3) << 8)) << 16)
-80031304       store_i16(channel_state + 0x60, load_u8(argument2 + 0x4) << 8)
-			*/
 		}
 		else {
+			uint8_t transposed_note;
 			if (playerTrack.portamento_speed && playerTrack.previous_note_number) {
-				saved2 = (playerTrack.previous_note_number & 0xFF) + (playerTrack.previous_transpose & 0xFF);
+				transposed_note = (playerTrack.previous_note_number & 0xFF) + (playerTrack.previous_transpose & 0xFF);
 				playerTrack.pitch_slide_length = playerTrack.portamento_speed;
-				playerTrack.pitch_slide_amount = (saved2 & 0xFF) + playerTrack.transpose - playerTrack.previous_note_number - playerTrack.previous_transpose;
+				playerTrack.pitch_slide_amount = transposed_note + playerTrack.transpose - playerTrack.previous_note_number - playerTrack.previous_transpose;
 				playerTrack.note = playerTrack.previous_note_number - playerTrack.transpose + playerTrack.previous_transpose;
 			}
 			else {
-				note = argument0 + playerTrack.octave * 12;
+				uint32_t note = instruction / 11 + playerTrack.octave * 12;
 				playerTrack.note = note & 0xFF;
-				saved2 = (playerTrack.transpose & 0xFF) + note;
+				transposed_note = (playerTrack.transpose & 0xFF) + note;
 			}
 
-			saved2 &= 0xFF;
-/*
-80031324       if load_u16(channel_state + 0x6C)
-				   && load_u16(channel_state + 0x6A) then
-8003134C         saved2 = load_u8(channel_state + 0x6A) + load_u8(channel_state + 0xD4)
-80031360         store_i16(channel_state + 0x68, load_u16(channel_state + 0x6C))
-80031370         argument0 = load_u16(channel_state + 0xD4)
-80031374         store_i16(channel_state + 0xD2, (saved2 & 0xFF) + load_u16(channel_state + 0xCC) - load_u16(channel_state + 0x6A) - argument0)
-80031388         store_i16(channel_state + 0xD0, load_u16(channel_state + 0x6A) - (load_u16(channel_state + 0xCC) - argument0))
-80031384       else
-80031308         value0 = load_u16(channel_state + 0x66)
-80031328         saved2 = argument0 + (((value0 << 1) + value0) << 2)
-80031394         store_i16(channel_state + 0xD0, saved2 & 0xFF)
-8003139C         saved2 += load_u8(channel_state + 0xCC)
-			   end
-800313A8       argument0 = saved2 & 0xFF
-800313AC       Low, High = u32(argument0) * u32(0xAAAAAAAB)
-800313B4       value1 = u32(High) >> 3
-800313C4       saved2 = argument0 - (((value1 << 1) + value1) << 2)
-800313D8       argument1 = value1 & 0xFF
-800313D4       if load_u16(channel_state + 0x6E) & 0x2 == 0 then
-800313E4         if load_u16(channel_state + 0x54) == 0 then
-800313F4           argument0 = voice | load_i32(player + 0x8)
-800313F8           store_i32(player + 0x8, argument0)
-80031408           if load_i32(channel_state + 0x38) & 0x100 then
-80031414             value1 = load_u16(channel_state + 0x24)
-					 if u32(load_i32(channel_state + 0x24)) >= 24 then
-80031424               value1 -= 24
-					 end
-80031434             store_i32(player + 0x8, (1 << value1) | argument0)
-				   end
-80031430         else
-8003144C           store_i32(0x800A9FD0, voice | load_i32(0x800A9FD0))
-				 end
-80031450         store_i16(channel_state + 0x64, 0)
-			   end
-80031474       value1 = argument1 & 0xFFFF
-80031478       argument0 = load_i32(0x80075F38 + ((saved2 & 0xFF) << 2) + ((load_u16(channel_state + 0x58) << 6)))
-80031480       if u32(value1) >= 7 then
-80031490         argument0 = argument0 << (u32(value1) + 4294967290)
-8003148C       else if u32(value1) < 6 then
-800314A0         argument0 = u32(argument0) >> (6 - value1)
-			   end
-*/
+			if (!(playerTrack.legato_flags & 0x2)) {
+				if (!playerTrack.use_global_track) {
+					player.key_on_voices |= voice;
+					if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
+						uint32_t overlay_voice_num = playerTrack.overlay_voice_num;
+						if (overlay_voice_num >= 24) {
+							overlay_voice_num -= 24;
+						}
+						player.key_on_voices |= 1 << overlay_voice_num;
+					}
+				}
+				else {
+					_key_on_voices |= voice;
+				}
+				playerTrack.pitch_slide_length_counter = 0;
+			}
+			// FIXME: 0???
+			pitch = _instruments[playerTrack.instrument].pitch[0];
+			uint8_t key_scaled = transposed_note / 12;
+			if (key_scaled >= 7) {
+				pitch <<= key_scaled - 6;
+			}
+			else if (key_scaled < 6) {
+				pitch >>= 6 - key_scaled;
+			}
+		}
+		if (!playerTrack.use_global_track) {
+			player.keyed_voices |= voice;
+		}
+		else {
+			_keyed_voices |= voice;
+		}
+
+		playerTrack.update_flags |= AkaoUpdateFlags::VoicePitch | AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+		if (playerTrack.tuning) {
+			if (playerTrack.tuning > 0) {
+				pitch = (pitch + ((pitch * playerTrack.tuning) >> 7)) & 0xFFFF;
+			}
+			else {
+				pitch = (pitch + ((pitch * playerTrack.tuning) >> 8)) & 0xFFFF;
+			}
+		}
+
+		playerTrack.pitch_of_note = pitch;
+
+		if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::VibratoEnabled) {
+			uint32_t vibrato_max_amplitude;
+			uint8_t vibrato_depth = playerTrack.vibrato_depth >> 8;
+			if (vibrato_depth & 0x80) {
+				vibrato_max_amplitude = (vibrato_depth & 0x7F) * pitch;
+			}
+			else {
+				vibrato_max_amplitude = (vibrato_depth & 0x7F) * ((pitch * 15) >> 8);
+			}
+			playerTrack.vibrato_max_amplitude = vibrato_max_amplitude >> 7;
+			playerTrack.vibrato_delay_counter = playerTrack.vibrato_delay;
+			playerTrack.vibrato_rate_counter = 1;
+			playerTrack.vibrato_lfo_addr = _pan_lfo_addrs[playerTrack.vibrato_form]; // TODO: max 52
+		}
+
+		if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::TremoloEnabled) {
+			playerTrack.tremolo_delay_counter = playerTrack.tremolo_delay;
+			playerTrack.tremolo_rate_counter = 1;
+			playerTrack.tremolo_lfo_addr = _pan_lfo_addrs[playerTrack.tremolo_form]; // TODO: max 52
+		}
+
+		if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::ChannelPanLfoENabled) {
+			playerTrack.pan_lfo_rate_counter = 1;
+			playerTrack.pan_lfo_addr = _pan_lfo_addrs[playerTrack.pan_lfo_form]; // TODO: max 52
+		}
+
+		playerTrack.vibrato_lfo_amplitude = 0;
+		playerTrack.tremolo_lfo_amplitude = 0;
+		playerTrack.pitch_bend_slide_amplitude = 0;
+	}
+
+	playerTrack.legato_flags = (playerTrack.legato_flags & 0xFFFD) | ((playerTrack.legato_flags & 0x1) << 1);
+	if (playerTrack.pitch_slide_amount) {
+		playerTrack.note += playerTrack.pitch_slide_amount;
+		uint8_t transposed_note = (uint8_t(playerTrack.note) + uint8_t(playerTrack.transpose)) & 0xFF;
+		if (!playerTrack.use_global_track) {
+			// FIXME: 0???
+			pitch = _instruments[playerTrack.instrument].pitch[0];
+			if (playerTrack.tuning) {
+				if (playerTrack.tuning > 0) {
+					pitch = (pitch + ((pitch * playerTrack.tuning) >> 7)) & 0xFFFF;
+				}
+				else {
+					pitch = (pitch + ((pitch * playerTrack.tuning) >> 8)) & 0xFFFF;
+				}
+			}
+			pitch <<= 16;
+		}
+		else {
+			// FIXME: 0???
+			pitch = _instruments[playerTrack.instrument].pitch[0] << 16;
+		}
+
+		uint8_t key_scaled = transposed_note / 12;
+		if (key_scaled >= 7) {
+			pitch <<= key_scaled - 6;
+		}
+		else if (key_scaled < 6) {
+			pitch >>= 6 - key_scaled;
+		}
+
+		playerTrack.pitch_slide_length_counter = playerTrack.pitch_slide_length;
+		if (playerTrack.pitch_slide_length_counter == 0) {
+			return false;
+		}
+		playerTrack.pitch_slide_amount = 0;
+		playerTrack.pitch_bend_slope = (pitch - ((playerTrack.pitch_of_note << 16) + playerTrack.pitch_bend_slide_amplitude)) / playerTrack.pitch_slide_length_counter;
+	}
+
+	playerTrack.previous_note_number = playerTrack.note;
+	playerTrack.previous_transpose = playerTrack.transpose;
+
+	return true;
+}
+
+void AkaoExec::akaoDispatchMessages()
+{
+	if (_unknown62F8C == 0) {
+		while (!_akaoMessageQueue.empty()) {
+			const AkaoMessage& message = _akaoMessageQueue.front();
+			switch (message.opcode) {
+			case 0x10: break; //8002b1f8
+			default: break;
+			}
+			_akaoMessageQueue.pop();
 		}
 	}
 
 /*
-80030E7C stackPointer = u32(stackPointer) + 4294967232
-80030E80 store_i32(stackPointer + 0x20, channel_state)
-80030E84 channel_state = argument0
-80030E88 store_i32(stackPointer + 0x2C, player)
-80030E8C player = argument1
-80030E90 store_i32(stackPointer + 0x34, voice)
-80030E94 voice = argument2
-80030E98 store_i32(stackPointer + 0x38, saved6)
-80030EA0 saved6 = 0x80049828
-80030EA4 store_i32(stackPointer + 0x30, saved4)
-80030EA8 saved4 = 160
-80030EAC store_i32(stackPointer + 0x3C, returnAddress)
-80030EB0 store_i32(stackPointer + 0x28, saved2)
-80030EB4 store_i32(stackPointer + 0x24, saved1)
-
-80030EB8 do
-           value0 = load_i32(channel_state)
-80030EC4   store_i32(channel_state, u32(value0) + 1)
-80030EC8   saved2 = load_u8(value0)
-80030ED0   saved1 = saved2 & 0xFF
-80030EDC   argument0 = channel_state
-80030ED8   break if u32(saved1) < 160
-80030EEC   argument1 = player
-80030EF4   argument2 = voice
-80030EF0   returnAddress = pc + 8; jump load_i32((saved1 << 2) + 0x80049828)
-		 while saved1 != 160
-80030F04 if saved1 != 160 then
-80030F10   argument0 = channel_state
-80030F0C   returnAddress = pc + 8; jump 0x318BC
-80030F14   argument1 = load_i16(channel_state + 0xC4)
-80030F1C   if argument1 then
-80030F2C     store_i16(channel_state + 0x56, (argument1 << 8) + argument1)
-		   end
-80030F30   value1 = load_u16(channel_state + 0x56)
-		   if value1 & 0xFF != 0 then # delta_time_counter
-			 if u32(160) < 143
-80030F4C       && (u32(160) >= 132
-80030F60       || load_u16(channel_state + 0x6E) & 0x5) then
-                (noop)
-			 else
-80030F70       store_i16(channel_state + 0x56, u32(value1) - 512)
-             end
-80030F6C   else
-80030F7C     Low, High = u32(saved1) * u32(0xBA2E8BA3)
-80030F84     value1 = u32(High) >> 3
-80030FB0     value1 = load_u16(0x80049C28 + ((saved1 - ((((value1 << 1) + value1) << 2) - value1)) & 0xFF) << 1)
-80030FBC     if u32(u32(160) - 132) >= 11
-80030FD0         && !(load_u16(channel_state + 0x6E) & 0x5) then
-80030FD8       value1 -= 512
-		     end
-80030FDC     store_i16(channel_state + 0x56, value1)
-           end
-80030FE4   value1 = saved2 & 0xFF
-80030FE8   store_i16(channel_state + 0xC2, load_u8(channel_state + 0x56))
-		   if u32(value1) >= 143 then
-80030FFC     store_i16(channel_state + 0x6C, 0)
-80031000     store_i16(channel_state + 0xD6, 0)
-80031004     store_i16(channel_state + 0xD8, 0)
-80031010     store_i16(channel_state + 0x6E, load_u16(channel_state + 0x6E) & 0xFFFD)
-8003100C     return
-		   end
-		   if u32(value1) < 132 then
-80031028     argument0 = u32(u32(value1) * u32(0xBA2E8BA3)) / 0x800000000
-80031038     if load_i32(channel_state + 0x38) & 0x8 then
-80031048       if load_u16(channel_state + 0x54) == 0 then
-80031060         store_i32(player + 0x8, voice | load_i32(player + 0x8))
-8003105C       else
-80031078         store_i32(0x800A9FD0, voice | load_i32(0x800A9FD0))
-               end
-800310A8       argument0 = (argument0 - 12 * ((argument0 & 0xFF) * 0xAAAAAAAB) / 0x800000000)) & 0xFF
-800310B4       argument2 = load_i32(channel_state + 0x14) + argument0 * 4 + argument0
-800310B8       value1 = load_u8(argument2)
-			   if value1 != load_u16(channel_state + 0x58) then
-800310CC         store_i16(channel_state + 0x58, value1)
-800310F0         store_i32(channel_state + 0xE4, load_i32(0x80075F28 + (load_u8(argument2) << 6)))
-80031114         store_i32(channel_state + 0xE8, load_i32(0x80075F2C + (load_u8(argument2) << 6)))
-80031138         store_i16(channel_state + 0xFA, load_u8(0x80075F30 + (load_u8(argument2) << 6)))
-8003115C         store_i16(channel_state + 0xFC, load_u8(0x80075F31 + (load_u8(argument2) << 6)))
-80031180         store_i16(channel_state + 0xFE, load_u8(0x80075F32 + (load_u8(argument2) << 6)))
-800311A4         store_i16(channel_state + 0x100, load_u8(0x80075F33 + (load_u8(argument2) << 6)))
-800311C8         store_i32(channel_state + 0xEC, load_u8(0x80075F35 + (load_u8(argument2) << 6)))
-800311F8         store_i32(channel_state + 0xF0, load_u8(0x80075F36 + (load_u8(argument2) << 6)))
-800311F4         if load_i32(channel_state + 0x38) & 0x200 == 0 then
-8003121C           store_i16(channel_state + 0x102, load_u8(0x80075F34 + (load_u8(argument2) << 6)))
-80031240           store_i32(channel_state + 0xE0, load_i32(channel_state + 0xE0) | 0x1FF80)
-80031248           store_i32(channel_state + 0xF4, load_u8(0x80075F37 + (load_u8(argument2) << 6)))
-80031244         else
-8003125C           store_i32(channel_state + 0xE0, load_i32(channel_state + 0xE0) | 0x1BB80)
-                 end
-			   end
-80031264       value1 = load_u8(argument2 + 0x1)
-8003126C       Low, High = u32(value1) * u32(0xAAAAAAAB)
-800312AC       argument1 = (u32(High) >> 3) & 0xFF
-800312B4       argument0 = load_i32((((value1 - (((argument1 << 1) + argument1) << 2)) & 0xFF) << 2) + ((load_u8(argument2) << 6) + 0x80075F38))
-			   if u32(argument1) >= 7 then
-800312C8         argument0 = argument0 << (u32(argument1) - 6)
-800312C4       else if u32(argument1) < 6 then
-800312D8         argument0 >>= 6 - argument1
-			   end
-800312F0       store_i32(channel_state + 0x44, (load_u8(argument2 + 0x2) + (load_u8(argument2 + 0x3) << 8)) << 16)
-80031304       store_i16(channel_state + 0x60, load_u8(argument2 + 0x4) << 8)
-80031300     else
-80031308       value0 = load_u16(channel_state + 0x66)
-80031328       saved2 = argument0 + (((value0 << 1) + value0) << 2)
-80031324       if load_u16(channel_state + 0x6C)
-			       && load_u16(channel_state + 0x6A) then
-8003134C         saved2 = load_u8(channel_state + 0x6A) + load_u8(channel_state + 0xD4)
-80031360         store_i16(channel_state + 0x68, load_u16(channel_state + 0x6C))
-80031370         argument0 = load_u16(channel_state + 0xD4)
-80031374         store_i16(channel_state + 0xD2, (saved2 & 0xFF) + load_u16(channel_state + 0xCC) - load_u16(channel_state + 0x6A) - argument0)
-80031388         store_i16(channel_state + 0xD0, load_u16(channel_state + 0x6A) - (load_u16(channel_state + 0xCC) - argument0))
-80031384       else
-80031394         store_i16(channel_state + 0xD0, saved2 & 0xFF)
-8003139C         saved2 += load_u8(channel_state + 0xCC)
-               end
-800313A8       argument0 = saved2 & 0xFF
-800313AC       Low, High = u32(argument0) * u32(0xAAAAAAAB)
-800313B4       value1 = u32(High) >> 3
-800313C4       saved2 = argument0 - (((value1 << 1) + value1) << 2)
-800313D8       argument1 = value1 & 0xFF
-800313D4       if load_u16(channel_state + 0x6E) & 0x2 == 0 then
-800313E4         if load_u16(channel_state + 0x54) == 0 then
-800313F4           argument0 = voice | load_i32(player + 0x8)
-800313F8           store_i32(player + 0x8, argument0)
-80031408           if load_i32(channel_state + 0x38) & 0x100 then
-80031414             value1 = load_u16(channel_state + 0x24)
-				     if u32(load_i32(channel_state + 0x24)) >= 24 then
-80031424               value1 -= 24
-				     end
-80031434             store_i32(player + 0x8, (1 << value1) | argument0)
-                   end
-80031430         else
-8003144C           store_i32(0x800A9FD0, voice | load_i32(0x800A9FD0))
-                 end
-80031450         store_i16(channel_state + 0x64, 0)
-			   end
-8003145C       argument0 = 0x80075F38
-80031474       value1 = argument1 & 0xFFFF
-80031478       argument0 = load_i32(((saved2 & 0xFF) << 2) + ((load_u16(channel_state + 0x58) << 6) + argument0))
-80031480       if u32(value1) >= 7 then
-80031490         argument0 = argument0 << (u32(value1) + 4294967290)
-8003148C       else if u32(value1) < 6 then
-800314A0         argument0 = u32(argument0) >> (6 - value1)
-		       end
-			 end
-800314AC     if load_u16(channel_state + 0x54) == 0 then
-800314C4       store_i32(player + 0xC, voice | load_i32(player + 0xC))
-800314C0     else
-800314DC       store_i32(0x800A9FD4, voice | load_i32(0x800A9FD4))
-             end
-800314E4     value1 = load_i16(channel_state + 0xCE)
-800314F0     store_i32(channel_state + 0xE0, load_i32(channel_state + 0xE0) | 0x13)
-800314EC     if value1 != 0 then
-800314F8       Low, High = argument0 * value1
-800314F4       if value1 > 0 then
-80031504         value0 = u32(Low) >> 7
-80031500       else
-8003150C         value0 = u32(Low) >> 8
-               end
-80031514       argument0 = (argument0 + value0) & 0xFFFF
-			 end
-80031528     store_i32(channel_state + 0x30, argument0)
-80031524     if load_i32(channel_state + 0x38) & 0x1 then
-8003152C       value0 = load_u16(channel_state + 0x7E)
-8003153C       if value0 & 0x8000 != 0 then
-80031548         Low, High = (u32(value0 & 0x7F00) >> 8) * argument0
-80031544       else
-80031558         Low, High = value1 * (u32((argument0 << 4) - argument0) >> 8)
-               end
-80031568       store_i16(channel_state + 0x7C, u32(Low) >> 7)
-80031588       store_i16(channel_state + 0x74, load_u16(channel_state + 0x72))
-8003158C       store_i16(channel_state + 0x78, 1)
-80031590       store_i32(channel_state + 0x18, load_i32(0x8004A5CC + (load_u16(channel_state + 0x7A) << 2)))
-			 end
-800315A0     if load_i32(channel_state + 0x38) & 0x2 then
-800315C8       store_i16(channel_state + 0x88, load_u16(channel_state + 0x86))
-800315CC       store_i16(channel_state + 0x8C, 1)
-800315D0       store_i32(channel_state + 0x1C, load_i32(0x8004A5CC + (load_u16(channel_state + 0x8E) << 2)))
-			 end
-800315E0     if load_i32(channel_state + 0x38) & 0x4 != 0 then
-80031608       store_i16(channel_state + 0x9A, 1)
-8003160C       store_i32(channel_state + 0x20, load_i32(0x8004A5CC + (load_u16(channel_state + 0x9C) << 2)))
-			 end
-80031610     store_i16(channel_state + 0xD6, 0)
-80031614     store_i16(channel_state + 0xD8, 0)
-80031618     store_i32(channel_state + 0x34, 0)
-		   end
-8003161C   value0 = load_u16(channel_state + 0x6E)
-80031620   argument0 = load_i16(channel_state + 0xD2)
-80031634   store_i16(channel_state + 0x6E, (value0 & 0xFFFD) | ((value0 & 0x1) << 1))
-80031638   if argument0 != 0 then
-8003164C     store_i16(channel_state + 0xD0, load_u16(channel_state + 0xD0) + argument0)
-8003166C     saved2 = load_u8(channel_state + 0xD0) + load_u8(channel_state + 0xCC)
-80031668     if ! load_u16(channel_state + 0x54) then
-80031678       argument0 = saved2 & 0xFF
-8003167C       Low, High = u32(argument0) * u32(0xAAAAAAAB)
-80031684       value0 = u32(High) >> 3
-800316B4       argument0 = (((argument0 - (((value0 << 1) + value0) << 2)) & 0xFF) << 2) + ((load_u16(channel_state + 0x58) << 6) + 0x80075F38)
-800316B8       value0 = load_i16(channel_state + 0xCE)
-800316BC       argument0 = load_i32(argument0)
-800316C0       if value0 != 0 then
-800316CC         Low, High = argument0 * value0
-800316C8         if value0 > 0 then
-800316D8           value0 = u32(Low) >> 7
-800316D4         else
-800316E0           value0 = u32(Low) >> 8
-                 end
-800316E8         argument0 = (argument0 + value0) & 0xFFFF
-			   end
-800316F0       argument0 <<= 16
-800316EC     else
-800316FC       argument0 = saved2 & 0xFF
-80031700       Low, High = u32(argument0) * u32(0xAAAAAAAB)
-80031708       value0 = u32(High) >> 3
-80031744       argument0 = load_i32((((argument0 - (((value0 << 1) + value0) << 2)) & 0xFF) << 2) + ((load_u16(channel_state + 0x58) << 6) + 0x80075F38)) << 16 
-             end
-80031754     Low, High = u32(saved2 & 0xFF) * u32(0xAAAAAAAB)
-80031760     value1 = (u32(High) >> 3) & 0xFF
-			 if u32(value1) >= 7 then
-80031778       argument0 = argument0 << (u32(value1) - 6)
-80031774     else if u32(value1) < 6 then
-80031788       argument0 >>= 6 - value1
-			 end
-80031794     store_i16(channel_state + 0x64, load_u16(channel_state + 0x68))
-800317A8     value1 = load_u16(channel_state + 0x64)
-800317AC     value0 = argument0 - ((load_i32(channel_state + 0x30) << 16) + load_i32(channel_state + 0x34))
-800317B0     Low = value0 / value1
-800317B4     if value1 == 0 then
-800317BC       breakpoint(7168)
-			 end
-800317C4     if value1 == -1
-800317CC         && value0 == 0x80000000 then
-800317D4       breakpoint(6144)
-			 end
-800317DC     store_i16(channel_state + 0xD2, 0)
-800317E0     store_i32(channel_state + 0x4C, Low)
-		   end
-800317EC   store_i16(channel_state + 0x6A, load_u16(channel_state + 0xD0))
-800317F0   store_i16(channel_state + 0xD4, load_u16(channel_state + 0xCC))
+8002E1BC if load_i32(0x80062F8C) == 0 then
+8002E1D0   saved0 = 0x80081DC8
+8002E1D4   while load_i32(0x80063010) then
+8002E1F4       value0 = load_i32(0x80049548 + (load_u8(saved0) * 4))
+8002E200       argument0 = saved0
+8002E1FC       returnAddress = pc + 8; jump value0
+8002E218       store_i32(0x80063010, load_i32(0x80063010) - 1)
+8002E220       saved0 += 36
+8002E21C   end
 		 end
-
-800317F4 returnAddress = load_i32(stackPointer + 0x3C)
-800317F8 saved6 = load_i32(stackPointer + 0x38)
-800317FC voice = load_i32(stackPointer + 0x34)
-80031800 saved4 = load_i32(stackPointer + 0x30)
-80031804 player = load_i32(stackPointer + 0x2C)
-80031808 saved2 = load_i32(stackPointer + 0x28)
-8003180C saved1 = load_i32(stackPointer + 0x24)
-80031810 channel_state = load_i32(stackPointer + 0x20)
-80031814 stackPointer = u32(stackPointer) + 64
-80031818 jump returnAddress
 */
 }
 
@@ -591,7 +687,7 @@ uint32_t AkaoExec::akaoReadNextNote(const uint8_t* data, AkaoPlayerTrack& player
 	return 160;
 }
 
-void AkaoExec::akaoMain()
+bool AkaoExec::akaoMain()
 {
 	akaoDspMain();
 
@@ -623,7 +719,9 @@ void AkaoExec::akaoMain()
 					_playerTracks[channel].gate_time_counter -= 1;
 
 					if (_playerTracks[channel].delta_time_counter == 0) {
-						akaoDispatchVoice(_playerTracks[channel], _player, voice);
+						if (!akaoDispatchVoice(data, _playerTracks[channel], _player, voice)) {
+							return false;
+						}
 					}
 					else if (_playerTracks[channel].gate_time_counter == 0) {
 						_playerTracks[channel].gate_time_counter = 1;
@@ -694,7 +792,9 @@ void AkaoExec::akaoMain()
 					_playerTracks2[channel].gate_time_counter -= 1;
 
 					if (_playerTracks2[channel].delta_time_counter == 0) {
-						akaoDispatchVoice(_playerTracks2[channel], _player2, voice);
+						if (akaoDispatchVoice(data, _playerTracks2[channel], _player2, voice)) {
+							return false;
+						}
 					}
 					else if (_playerTracks2[channel].gate_time_counter == 0) {
 						_playerTracks2[channel].gate_time_counter = 1;
@@ -735,7 +835,9 @@ void AkaoExec::akaoMain()
 						_playerTracks3[channel].gate_time_counter -= 1;
 
 						if (_playerTracks3[channel].delta_time_counter == 0) {
-							akaoDispatchVoice(_playerTracks3[channel], _player, voice);
+							if (!akaoDispatchVoice(data, _playerTracks3[channel], _player, voice)) {
+								return false;
+							}
 						}
 						else if (_playerTracks3[channel].gate_time_counter == 0) {
 							_playerTracks3[channel].gate_time_counter = 1;
@@ -754,14 +856,16 @@ void AkaoExec::akaoMain()
 		}
 	}
 
-	if (_player.field_54) {
-		akaoUnknown2C8DC(&_akaoMessage);
-		_player.field_54 = 0;
+	if (_player.pause) {
+		akaoPause();
+		_player.pause = 0;
 	}
 
 	akaoDispatchMessages();
 	akaoUnknown30380();
 	akaoUnknown2FE48();
+
+	return true;
 }
 
 void AkaoExec::akaoInit(uint32_t* spuTransferStartAddr, AkaoInstrAttr* spuTransferStopAddr)
@@ -844,11 +948,23 @@ void AkaoExec::akaoClearSpu()
 	SpuSetKey(SPU_OFF, _spuActiveVoices);
 
 	if (_spuActiveVoices & 0x10000) {
-		_playerTracks[16].update_flags = 0x1FF93;
+		_playerTracks[16].update_flags = AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight
+			| AkaoUpdateFlags::VoicePitch | AkaoUpdateFlags::VoiceStartAddr
+			| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+			| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+			| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+			| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+			| AkaoUpdateFlags::VoiceLoopStartAddr;
 	}
 
 	if (_spuActiveVoices & 0x20000) {
-		_playerTracks[17].update_flags = 0x1FF93;
+		_playerTracks[17].update_flags = AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight
+			| AkaoUpdateFlags::VoicePitch | AkaoUpdateFlags::VoiceStartAddr
+			| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+			| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+			| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+			| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+			| AkaoUpdateFlags::VoiceLoopStartAddr;
 	}
 
 	_spuActiveVoices = 0;
@@ -899,8 +1015,8 @@ void AkaoExec::akaoReset()
 	_global218 = 0x7F0000;
 	_global290 = 0x7FFF0000;
 	_player.stereo_mode = 1;
-	_unknown833DE = 0;
-	_unknown8337E = 0;
+	_unknown_song_id_833DE = 0;
+	_unknown_song_id_8337E = 0;
 	_player2.song_id = 0;
 	_player.song_id = 0;
 	_unknown83398 = 0;
@@ -951,27 +1067,27 @@ void AkaoExec::akaoReset()
 	_global22C = 64;
 
 	for (uint8_t voiceNum = 0; voiceNum < 24; ++voiceNum) {
-		_voiceUnknown9C60[voiceNum]._u0 = 0x7F0000;
-		_voiceUnknown9C60[voiceNum]._u4 = 0;
-		_voiceUnknown9C60[voiceNum]._u8 = 0;
-		_channels[voiceNum].playerTrack.voice_effect_flags = AkaoVoiceEffectFlags::None;
-		_channels[voiceNum].playerTrack.field_50 = 0;
-		_channels[voiceNum].playerTrack.use_global_track = 0;
-		_channels[voiceNum].playerTrack.voice = voiceNum;
+		_voiceUnknown9C6C0[voiceNum]._u0 = 0x7F0000;
+		_voiceUnknown9C6C0[voiceNum]._u4 = 0;
+		_voiceUnknown9C6C0[voiceNum]._u8 = 0;
+		_playerTracks[voiceNum].voice_effect_flags = AkaoVoiceEffectFlags::None;
+		_playerTracks[voiceNum].field_50 = 0;
+		_playerTracks[voiceNum].use_global_track = 0;
+		_playerTracks[voiceNum].voice = voiceNum;
 		SpuSetVoiceVolumeAttr(voiceNum, 0, 0, SPU_VOICE_DIRECT, SPU_VOICE_DIRECT);
 	}
 
 	for (uint8_t voiceNum = 16; voiceNum < 24; ++voiceNum) {
 		const uint8_t i = voiceNum - 16;
-		_channels3[i].playerTrack.field_5A = 0;
-		_channels3[i].playerTrack.field_3C = 0;
-		_channels3[i].playerTrack.overlay_balance_slide_length = 0;
-		_channels3[i].playerTrack.voice_effect_flags = AkaoVoiceEffectFlags::None;
-		_channels3[i].playerTrack.field_50 = 0;
-		_channels3[i].playerTrack.alternate_voice_num = voiceNum;
-		_channels3[i].playerTrack.use_global_track = 1;
-		_channels3[i].playerTrack.voice = voiceNum;
-		_channels3[i].playerTrack.overlay_balance = 0x7F00;
+		_playerTracks3[i].field_5A = 0;
+		_playerTracks3[i].field_3C = 0;
+		_playerTracks3[i].overlay_balance_slide_length = 0;
+		_playerTracks3[i].voice_effect_flags = AkaoVoiceEffectFlags::None;
+		_playerTracks3[i].field_50 = 0;
+		_playerTracks3[i].alternate_voice_num = voiceNum;
+		_playerTracks3[i].use_global_track = 1;
+		_playerTracks3[i].voice = voiceNum;
+		_playerTracks3[i].overlay_balance = 0x7F00;
 	}
 
 	_time_counter = 1;
@@ -1368,11 +1484,11 @@ void AkaoExec::spuNoiseVoice()
 
 	mask = _player2.noise_voices & _unknown62F68 & ~(_unknown99FCC | _spuActiveVoices);
 	if (mask) {
-		voice_bit = getVoicesBits(_channels2, voice_bit, mask);
+		voice_bit = getVoicesBits(_playerTracks2, voice_bit, mask);
 	}
 	mask = ~(_unknown62F68 | _unknown99FCC | _spuActiveVoices) & _player.noise_voices;
 	if (mask) {
-		voice_bit = getVoicesBits(_channels, voice_bit, mask);
+		voice_bit = getVoicesBits(_playerTracks, voice_bit, mask);
 	}
 
 	voice_bit |= _noise_voices;
@@ -1427,7 +1543,12 @@ void AkaoExec::finishChannel(AkaoPlayerTrack& playerTrack, int argument2)
 		_player.key_on_voices &= argument3;
 		_player.keyed_voices &= argument3;
 		_player.key_off_voices &= argument3;
-		_channels[playerTrack.alternate_voice_num].playerTrack.update_flags |= 0x1FF80;
+		_playerTracks[playerTrack.alternate_voice_num].update_flags |= AkaoUpdateFlags::VoiceStartAddr
+			| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+			| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+			| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+			| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+			| AkaoUpdateFlags::VoiceLoopStartAddr;
 	}
 	playerTrack.voice_effect_flags = AkaoVoiceEffectFlags::None;
 	_player.spucnt |= 0x10;
@@ -1451,7 +1572,7 @@ bool AkaoExec::loadInstrument(const uint8_t *data, AkaoPlayerTrack& playerTrack,
 	}
 
 	if (playerTrack.use_global_track != 0 || !((_player.keyed_voices & argument2) & _unknown99FCC)) {
-		playerTrack.update_flags |= 0x10;
+		playerTrack.update_flags |= AkaoUpdateFlags::VoicePitch;
 		if (_instruments[playerTrack.instrument].pitch[0] == 0) {
 			return false;
 		}
@@ -1470,7 +1591,12 @@ bool AkaoExec::loadInstrument(const uint8_t *data, AkaoPlayerTrack& playerTrack,
 		playerTrack.adsr_decay_rate = instr.adsr_decay_rate;
 		playerTrack.adsr_sustain_level = instr.adsr_sustain_level;
 		playerTrack.adsr_sustain_rate = instr.adsr_sustain_rate;
-		playerTrack.update_flags |= 0x1BB80;
+		playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+			| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+			| AkaoUpdateFlags::AdsrAttackRate
+			| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+			| AkaoUpdateFlags::AdsrSustainLevel
+			| AkaoUpdateFlags::VoiceLoopStartAddr;
 	}
 	else {
 		akaoSetInstrument(playerTrack, instrument);
@@ -1494,17 +1620,22 @@ void AkaoExec::akaoSetInstrument(AkaoPlayerTrack& playerTrack, uint8_t instrumen
 	playerTrack.adsr_sustain_level = instr.adsr_sustain_level;
 	playerTrack.adsr_sustain_rate = instr.adsr_sustain_rate;
 	playerTrack.adsr_release_rate = instr.adsr_release_rate;
-	playerTrack.update_flags |= 0x1FF80;
+	playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+		| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+		| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+		| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+		| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+		| AkaoUpdateFlags::VoiceLoopStartAddr;
 }
 
 void AkaoExec::adsrDecayRate(const uint8_t *data, AkaoPlayerTrack& playerTrack)
 {
-	OPCODE_ADSR_UPDATE(adsr_decay_rate, 0x1000);
+	OPCODE_ADSR_UPDATE(adsr_decay_rate, AkaoUpdateFlags::AdsrDecayRate);
 }
 
 void AkaoExec::adsrSustainLevel(const uint8_t* data, AkaoPlayerTrack& playerTrack)
 {
-	OPCODE_ADSR_UPDATE(adsr_sustain_level, 0x8000);
+	OPCODE_ADSR_UPDATE(adsr_sustain_level, AkaoUpdateFlags::AdsrSustainLevel);
 }
 
 void AkaoExec::turnOnReverb(AkaoPlayerTrack& playerTrack, int argument2)
@@ -1606,7 +1737,7 @@ void AkaoExec::turnOnOverlayVoice(const uint8_t* data, AkaoPlayerTrack& playerTr
 		playerTrack.voice_effect_flags |= AkaoVoiceEffectFlags::OverlayVoiceEnabled;
 		uint8_t instrument1 = data[1], instrument2 = data[2];
 		akaoSetInstrument(playerTrack, instrument1);
-		akaoSetInstrument(_channels[voice].playerTrack, instrument2);
+		akaoSetInstrument(_playerTracks[voice], instrument2);
 	}
 }
 
@@ -1643,7 +1774,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 	}
 
 	uint8_t op = data[0];
-	AkaoPlayerTrack& playerTrack = _channels[channel].playerTrack;
+	AkaoPlayerTrack& playerTrack = _playerTracks[channel];
 
 	if (op < 0x9A) {
 
@@ -1673,7 +1804,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			break;
 		case 0xA3: // Channel Master Volume
 			const uint8_t master_volume = data[1];
-			playerTrack.update_flags |= 0x3;
+			playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			playerTrack.master_volume = uint32_t(master_volume);
 			break;
 		case 0xA4: // Pitch Bend Slide
@@ -1695,7 +1826,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xA8: // Channel Volume
 			const uint8_t volume = data[1];
 			playerTrack.volume_slide_length = 0;
-			playerTrack.update_flags |= 0x3;
+			playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			playerTrack.volume = uint32_t(volume) << 23;
 			break;
 		case 0xA9: // Channel Volume Slide
@@ -1704,7 +1835,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xAA: // Set Channel Pan
 			const uint8_t pan = data[1];
 			playerTrack.pan_slide_length = 0;
-			playerTrack.update_flags |= 0x3;
+			playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			playerTrack.pan = pan << 8;
 			break;
 		case 0xAB: // Set Channel Pan Slide
@@ -1729,7 +1860,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			_player.spucnt |= 0x10;
 			break;
 		case 0xAD: // ADSR Attack Rate
-			OPCODE_ADSR_UPDATE(adsr_attack_rate, 0x900);
+			OPCODE_ADSR_UPDATE(adsr_attack_rate, AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrAttackRate);
 			break;
 		case 0xAE: // ADSR Decay Rate
 			adsrDecayRate(data, playerTrack);
@@ -1742,10 +1873,10 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			adsrSustainLevel(data, playerTrack);
 			break;
 		case 0xB1: // ADSR Sustain Rate
-			OPCODE_ADSR_UPDATE(adsr_sustain_rate, 0x2200);
+			OPCODE_ADSR_UPDATE(adsr_sustain_rate, AkaoUpdateFlags::AdsrSustainMode | AkaoUpdateFlags::AdsrSustainRate);
 			break;
 		case 0xB2: // ADSR Release Rate
-			OPCODE_ADSR_UPDATE(adsr_release_rate, 0x4400);
+			OPCODE_ADSR_UPDATE(adsr_release_rate, AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrReleaseRate);
 			break;
 		case 0xB3: // ADSR Reset
 			const AkaoInstrAttr& instr = _instruments[playerTrack.instrument];
@@ -1757,9 +1888,12 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			playerTrack.adsr_attack_mode = instr.adsr_attack_mode;
 			playerTrack.adsr_sustain_mode = instr.adsr_sustain_mode;
 			playerTrack.adsr_release_mode = instr.adsr_release_mode;
-			playerTrack.update_flags |= 0xFF00;
+			playerTrack.update_flags |= AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+				| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+				| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+				| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-				AkaoPlayerTrack &otherTrack = _channels[playerTrack.overlay_voice_num].playerTrack;
+				AkaoPlayerTrack &otherTrack = _playerTracks[playerTrack.overlay_voice_num];
 				otherTrack.adsr_attack_rate = instr.adsr_attack_rate;
 				otherTrack.adsr_decay_rate = instr.adsr_decay_rate;
 				otherTrack.adsr_sustain_level = instr.adsr_sustain_level;
@@ -1808,10 +1942,10 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xB6: // Turn Off Vibrato
 			playerTrack.vibrato_lfo_amplitude = 0;
 			playerTrack.voice_effect_flags &= ~AkaoVoiceEffectFlags::VibratoEnabled;
-			playerTrack.update_flags |= 0x10;
+			playerTrack.update_flags |= AkaoUpdateFlags::VoicePitch;
 			break;
 		case 0xB7: // ADSR Attack Mode
-			OPCODE_ADSR_UPDATE(adsr_attack_mode, 0x100);
+			OPCODE_ADSR_UPDATE(adsr_attack_mode, AkaoUpdateFlags::AdsrAttackMode);
 			break;
 		case 0xB8: // Tremolo Channel Volume LFO
 			const uint8_t depth_or_delay = data[1];
@@ -1840,14 +1974,14 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xBA: // Turn Off Tremolo
 			playerTrack.tremolo_lfo_amplitude = 0;
 			playerTrack.voice_effect_flags &= ~AkaoVoiceEffectFlags::TremoloEnabled;
-			playerTrack.update_flags |= 0x3;
+			playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			break;
 		case 0xBB: // ADSR Sustain Mode
 			const uint8_t adsr_sustain_mode = data[1];
-			playerTrack.update_flags |= 0x200;
+			playerTrack.update_flags |= AkaoUpdateFlags::AdsrSustainMode;
 			playerTrack.adsr_sustain_mode = adsr_sustain_mode;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-				_channels[playerTrack.overlay_voice_num].playerTrack.adsr_sustain_mode = adsr_sustain_mode;
+				_playerTracks[playerTrack.overlay_voice_num].adsr_sustain_mode = adsr_sustain_mode;
 			}
 			break;
 		case 0xBC: // Channel Pan LFO
@@ -1866,14 +2000,14 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xBE: // Turn Off Channel Pan LFO
 			playerTrack.pan_lfo_amplitude = 0;
 			playerTrack.voice_effect_flags &= ~AkaoVoiceEffectFlags::ChannelPanLfoENabled;
-			playerTrack.update_flags |= 0x3;
+			playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			break;
 		case 0xBF: // ADSR Release Mode
 			const uint8_t adsr_release_mode = data[1];
-			playerTrack.update_flags |= 0x400;
+			playerTrack.update_flags |= AkaoUpdateFlags::AdsrReleaseMode;
 			playerTrack.adsr_release_mode = adsr_release_mode;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-				_channels[playerTrack.overlay_voice_num].playerTrack.adsr_release_mode = adsr_release_mode;
+				_playerTracks[playerTrack.overlay_voice_num].adsr_release_mode = adsr_release_mode;
 			}
 			break;
 		case 0xC0: // Channel Transpose Absolute
@@ -2079,7 +2213,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			int instrument = data[1];
 			const AkaoInstrAttr &instr = _instruments[instrument];
 			if (playerTrack.use_global_track != 0 || !((_player.keyed_voices & argument2) & _unknown99FCC)) {
-				playerTrack.update_flags |= 0x10;
+				playerTrack.update_flags |= AkaoUpdateFlags::VoicePitch;
 				const AkaoInstrAttr &playerInstr = _instruments[playerTrack.instrument];
 				if (playerInstr.pitch[0] == 0) {
 					return -2;
@@ -2096,16 +2230,26 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			playerTrack.adsr_attack_mode = instr.adsr_attack_mode;
 			playerTrack.adsr_sustain_mode = instr.adsr_sustain_mode;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::AlternateVoiceEnabled) {
-				playerTrack.update_flags |= 0x1BB80;
+				playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+					| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+					| AkaoUpdateFlags::AdsrAttackRate
+					| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+					| AkaoUpdateFlags::AdsrSustainLevel
+					| AkaoUpdateFlags::VoiceLoopStartAddr;
 			}
 			else {
 				playerTrack.adsr_release_rate = instr.adsr_release_rate;
 				playerTrack.adsr_release_mode = instr.adsr_release_mode;
-				playerTrack.update_flags |= 0x1FF80;
+				playerTrack.update_flags |= AkaoUpdateFlags::VoiceStartAddr
+					| AkaoUpdateFlags::AdsrAttackMode | AkaoUpdateFlags::AdsrSustainMode
+					| AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrAttackRate
+					| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
+					| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel
+					| AkaoUpdateFlags::VoiceLoopStartAddr;
 			}
 			break;
-		case 0xF3: // Set field 54
-			_player.field_54 = 1;
+		case 0xF3: // Set Pause
+			_player.pause = 1;
 			break;
 		case 0xF4: // Turn On Overlay Voice
 			turnOnOverlayVoice(data, playerTrack);
@@ -2127,7 +2271,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 			playerTrack.overlay_balance_slide_length = 0;
 			playerTrack.overlay_balance = balance << 8;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-				playerTrack.update_flags |= 0x3;
+				playerTrack.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
 			}
 			break;
 		case 0xF7: // Overlay Volume Balance Slide
@@ -2155,7 +2299,7 @@ int AkaoExec::execute_channel(channel_t channel, int argument2)
 		case 0xF9: // Turn Off Alternate Voice
 			_player.alternate_voices = !(1 << playerTrack.alternate_voice_num) & _player.alternate_voices;
 			playerTrack.voice_effect_flags &= ~AkaoVoiceEffectFlags::AlternateVoiceEnabled; // Disable
-			playerTrack.update_flags |= 0x4400;
+			playerTrack.update_flags |= AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrReleaseRate;
 			playerTrack.adsr_release_rate = _instruments[playerTrack.instrument].adsr_release_rate;
 			break;
 		case 0xFA:

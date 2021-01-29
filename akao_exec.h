@@ -7,10 +7,34 @@
 #include "include/LIBSPU.H"
 #include "include/LIBAPI.H"
 
+#define DECLARE_ENUM_METHODS(Name) \
+	inline Name operator|(Name flags, Name other) noexcept { \
+		return static_cast<Name>(static_cast<uint32_t>(flags) | static_cast<uint32_t>(other)); \
+	} \
+\
+	inline bool operator&(Name flags, Name other) noexcept { \
+		return bool(static_cast<Name>(static_cast<uint32_t>(flags) & static_cast<uint32_t>(other))); \
+	} \
+\
+	inline Name& operator|=(Name& flags, const Name& other) noexcept { \
+		flags = static_cast<Name>(static_cast<uint32_t>(flags) | static_cast<uint32_t>(other)); \
+		return flags; \
+	} \
+\
+	inline Name& operator&=(Name& flags, const Name& other) noexcept { \
+		flags = static_cast<Name>(static_cast<uint32_t>(flags) & static_cast<uint32_t>(other)); \
+		return flags; \
+	} \
+\
+	inline Name operator~(Name flags) noexcept { \
+		return static_cast<Name>(~static_cast<uint32_t>(flags)); \
+	}
+
 struct AkaoMessage // 36 bytes long
 {
-	uint16_t opcode;
-	uint16_t _padding;
+	uint8_t opcode;
+	uint8_t _padding1;
+	uint16_t _padding2;
 	uint32_t data[8];
 };
 
@@ -41,7 +65,7 @@ struct AkaoPlayer // 0x8009A104
 	uint16_t condition;                   // 0x4e: condition variable for dynamic branching according to game status (opcode 0xEF)
 	uint16_t reverb_depth_slide_length;   // 0x50: length of reverb depth slide
 	uint16_t noise_clock;                 // 0x52: noise clock frequency
-	uint16_t field_54;                    // 0x54: unknown (can be altered by opcode 0xF3)
+	uint16_t pause;                       // 0x54: set pause
 	uint16_t beats_per_measure;           // 0x56: beats per measure
 	uint16_t beat;                        // 0x58: current beat
 	uint16_t ticks_per_beat;              // 0x5a: ticks per beat
@@ -89,48 +113,30 @@ enum class AkaoVoiceEffectFlags : uint32_t {
 	AlternateVoiceEnabled = 0x0200,
 };
 
-AkaoVoiceEffectFlags operator|(AkaoVoiceEffectFlags flags, AkaoVoiceEffectFlags other) noexcept {
-	return static_cast<AkaoVoiceEffectFlags>(static_cast<uint32_t>(flags) | static_cast<uint32_t>(other));
-}
-
-bool operator&(AkaoVoiceEffectFlags flags, AkaoVoiceEffectFlags other) noexcept {
-	return bool(static_cast<AkaoVoiceEffectFlags>(static_cast<uint32_t>(flags) & static_cast<uint32_t>(other)));
-}
-
-AkaoVoiceEffectFlags& operator|=(AkaoVoiceEffectFlags &flags, const AkaoVoiceEffectFlags &other) noexcept {
-	flags = static_cast<AkaoVoiceEffectFlags>(static_cast<uint32_t>(flags) | static_cast<uint32_t>(other));
-	return flags;
-}
-
-AkaoVoiceEffectFlags& operator&=(AkaoVoiceEffectFlags& flags, const AkaoVoiceEffectFlags& other) noexcept {
-	flags = static_cast<AkaoVoiceEffectFlags>(static_cast<uint32_t>(flags) & static_cast<uint32_t>(other));
-	return flags;
-}
-
-AkaoVoiceEffectFlags operator~(AkaoVoiceEffectFlags flags) noexcept {
-	return static_cast<AkaoVoiceEffectFlags>(~static_cast<uint32_t>(flags));
-}
+DECLARE_ENUM_METHODS(AkaoVoiceEffectFlags);
 
 enum class AkaoUpdateFlags : uint32_t {
 	None = 0x00000,
-	VolumeRelated1 = 0x00001,
-	VolumeRelated2 = 0x00002,
+	VolumeLeft = 0x00001,
+	VolumeRight = 0x00002,
 	Unknown4 = 0x00004,
 	Unknown8 = 0x00008,
-	VibratoRelated = 0x00010,
+	VoicePitch = 0x00010,
 	Unknown20 = 0x00020,
 	Unknown40 = 0x00040,
-	Unknown80 = 0x00080,
-	AdsrAttackModeRelated = 0x00100,
-	AdsrSustainModeRelated = 0x00200,
-	AdsrReleaseModeRelated = 0x00400,
-	Unknown800 = 0x00800,
-	Unknown1000 = 0x01000,
-	Unknown2000 = 0x02000,
-	AdsrReleaseRateRelated = 0x04000,
-	Unknown8000 = 0x08000,
-	Unknown10000 = 0x10000,
+	VoiceStartAddr = 0x00080,
+	AdsrAttackMode = 0x00100,
+	AdsrSustainMode = 0x00200,
+	AdsrReleaseMode = 0x00400,
+	AdsrAttackRate = 0x00800,
+	AdsrDecayRate = 0x01000,
+	AdsrSustainRate = 0x02000,
+	AdsrReleaseRate = 0x04000,
+	AdsrSustainLevel = 0x08000,
+	VoiceLoopStartAddr = 0x10000,
 };
+
+DECLARE_ENUM_METHODS(AkaoUpdateFlags);
 
 struct AkaoPlayerTrack // 0x96608, size = 0x108
 {
@@ -214,7 +220,7 @@ struct AkaoPlayerTrack // 0x96608, size = 0x108
 	int16_t tremolo_lfo_amplitude;                    // 0xd8
 	int16_t pan_lfo_amplitude;                        // 0xda
 	uint32_t voice;                                   // 0xdc: voice number
-	uint32_t update_flags;                            // 0xe0: bitset that indicates what SPU registers need to be updated
+	AkaoUpdateFlags update_flags;                     // 0xe0: bitset that indicates what SPU registers need to be updated
 	uint32_t spu_addr;                                // 0xe4: waveform data start address (SPU address)
 	uint32_t loop_addr;                               // 0xe8: loop start address (SPU address)
 	uint32_t adsr_attack_mode;                        // 0xec: ADSR: attack mode
@@ -227,6 +233,25 @@ struct AkaoPlayerTrack // 0x96608, size = 0x108
 	uint16_t adsr_sustain_rate;                       // 0x100: ADSR: sustain rate
 	uint16_t adsr_release_rate;                       // 0x102: ADSR: release rate
 	uint32_t spu_volume;                              // 0x104: volume (left and right)
+};
+
+struct SpuRegisters { // 0x7EBE4 (size = 0x2C)
+	uint32_t _u0;                                     // 0x00
+	AkaoUpdateFlags update_flags;                     // 0x04 (7EBE8)
+	uint32_t voice_start_addr;                        // 0x08 (7EBEC)
+	uint32_t voice_loop_start_addr;                   // 0x0C (7EBF0)
+	uint32_t adsr_attack_rate_mode;                   // 0x10 (7EBF4)
+	uint32_t adsr_sustain_rate_mode;                  // 0x14 (7EBF8)
+	uint32_t adsr_release_rate_mode;                  // 0x18 (7EBFC)
+	uint16_t voice_pitch;                             // 0x1C (7EC00)
+	uint16_t adsr_attack_rate;                        // 0x1E (7EC02)
+	uint16_t adsr_decay_rate;                         // 0x20 (7EC04)
+	uint16_t adsr_sustain_level;                      // 0x22 (7EC06)
+	uint16_t adsr_sustain_rate;                       // 0x24 (7EC08)
+	uint16_t adsr_release_rate;                       // 0x26 (7EC0A)
+	int16_t volume_left;                              // 0x28 (7EC0C)
+	int16_t volume_right;                             // 0x2A (7EC0E)
+
 };
 
 struct VoiceUnknown9C60 { // size = 12
@@ -247,6 +272,7 @@ private:
 	int32_t _unknown4953C;
 	int32_t _unknown49540;
 	int32_t _unknown49544;
+	//void *_message_handlers; // 0x49548 -> 0x49948
 	static uint8_t _opcode_len[0x60]; // 0x49948
 	static uint8_t _delta_times[12];
 	static uint32_t _pan_lfo_addrs[PAN_LFO_ADDRS_LEN]; // 0x4A5CC
@@ -261,10 +287,11 @@ private:
 	int32_t _unknown62FF8;
 	//int32_t _akaoNumQueuedMessages; // 0x63010
 	AkaoInstrAttr _instruments[INSTRUMENTS_LEN]; // 0x75F28
-	std::queue<AkaoMessage> _akaoMessageQueue; // 0x81DC8
+	SpuRegisters _spuRegisters; // 0x7EBE4 -> 0x7EC10
+	//std::queue<AkaoMessage> _akaoMessageQueue; // 0x81DC8
 	int32_t _unknown83338;
-	int16_t _unknown833DE;
-	int16_t _unknown8337E;
+	int16_t _unknown_song_id_833DE;
+	int16_t _unknown_song_id_8337E;
 	int32_t _unknown83398;
 	char _spuMemoryManagementTable[SPU_MALLOC_RECSIZ * (4 + 1)];
 	AkaoPlayerTrack _playerTracks[AKAO_CHANNEL_MAX]; // 0x96608 -> 0x97EC8
@@ -290,9 +317,9 @@ private:
 	AkaoPlayer _player; // 0x9A104 -> 0x9A164
 	AkaoPlayer _player2; // 0x9A164 -> 0x9A1C4
 	SpuReverbAttr _spuReberbAttr; // 0x9C564
-	SpuCommonAttr _spuCommonAttr; // 0x9C578 -> 0x9C5C
-	VoiceUnknown9C60 _voiceUnknown9C60[AKAO_CHANNEL_MAX];
-	const Akao& _akao;
+	SpuCommonAttr _spuCommonAttr; // 0x9C578 -> 0x9C5C0
+	VoiceUnknown9C60 _voiceUnknown9C6C0[AKAO_CHANNEL_MAX]; // 0x9C6C0 -> 0x9C7E0
+	const Akao& _akao; // 0x1D0000
 	int32_t getVoicesBits(AkaoPlayerTrack* playerTracks, int32_t voice_bit, int32_t mask);
 	void spuNoiseVoice();
 	void spuReverbVoice();
@@ -321,15 +348,19 @@ private:
 	void akaoSpuSetTransferCallback();
 	void akaoTransferSamples(uint8_t* addr, uint32_t size);
 	void akaoWaitForSpuTransfer();
+	void akaoWriteSpuRegisters(int32_t voice, SpuRegisters &a2);
 	void akaoSetReverbMode(uint8_t reverbType);
 	void akaoReset();
 	void akaoClearSpu();
 	long akaoTimerCallback();
-	void akaoMain();
+	bool akaoMain();
 	void akaoDspMain();
-	void akaoDspOnTick(AkaoPlayerTrack* playerTracks, const AkaoPlayer& player, uint32_t voice);
-	void akaoUnknown2E954(AkaoPlayerTrack* playerTracks, uint32_t voice);
-	void akaoDispatchVoice(const uint8_t* data, AkaoPlayerTrack& playerTrack, const AkaoPlayer& player, uint32_t voice);
+	void akaoDspOnTick(AkaoPlayerTrack& playerTracks, AkaoPlayer& player, uint32_t voice);
+	void akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice);
+	void akaoPlayMusic();
+	void akaoPause();
+	bool akaoDispatchVoice(const uint8_t* data, AkaoPlayerTrack& playerTrack, AkaoPlayer& player, uint32_t voice);
+	void akaoDispatchMessages();
 	uint32_t akaoReadNextNote(const uint8_t* data, AkaoPlayerTrack& playerTrack);
 public:
 	explicit AkaoExec(const Akao& akao, bool loadInstruments2) noexcept;
