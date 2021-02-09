@@ -6,7 +6,7 @@ struct AkaoSeqHeader
 {
 	char akao[4];
 	uint16_t id;                    // song ID, used for playing sequence
-	uint16_t data_size;             // data length - sizeof(header)
+	uint16_t data_size;             // data length - sizeof(AkaoSeqHeader) + sizeof(channel_mask)
 	uint16_t reverb_type;           // reverb type (range from 0 to 9)
 	uint8_t year_bcd;               // year (in binary coded decimal)
 	uint8_t month_bcd;              // month (in binary coded decimal, between 0x01 - 0x12)
@@ -14,7 +14,6 @@ struct AkaoSeqHeader
 	uint8_t hours_bcd;              // hours (in binary coded decimal, between 0x00 - 0x23)
 	uint8_t minutes_bcd;            // minutes (in binary coded decimal, between 0x00 - 0x59)
 	uint8_t seconds_bcd;            // seconds (in binary coded decimal, between 0x00 - 0x59)
-	uint32_t channel_mask;          // represents bitmask of used channels in this song
 };
 
 bool AkaoFile::open(Akao& akao) const noexcept
@@ -34,24 +33,10 @@ bool AkaoFile::open(Akao& akao) const noexcept
 		return false;
 	}
 
-	const std::bitset<AKAO_CHANNEL_MAX> mask(header.channel_mask);
-	uint8_t channelCount = mask.count();
-	akao.setChannelCount(channelCount);
-
-	if (fread(akao.channelOffsets(), sizeof(uint16_t), channelCount, handle) != channelCount) {
-		return false;
-	}
-
 	if (!akao.setDataSize(header.data_size)) {
 		return false;
 	}
 	akao.setSongId(header.id);
-
-	for (int i = 0; i < channelCount; ++i) {
-		if (akao.channelOffset(i) >= header.data_size) {
-			return false;
-		}
-	}
 
 	if (fread(akao.data(), sizeof(uint8_t), header.data_size, handle) != header.data_size) {
 		return false;

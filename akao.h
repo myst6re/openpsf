@@ -9,24 +9,25 @@ typedef uint8_t channel_t;
 class Akao {
 private:
 	uint8_t _reverb_type;
-	uint16_t _channel_offsets[AKAO_CHANNEL_MAX];
-	uint8_t _channel_count;
 	uint8_t* _data;
 	uint16_t _data_size;
 	uint16_t _song_id;
 
 public:
 	Akao() noexcept :
-		_reverb_type(0), _channel_offsets(),
-		_channel_count(0), _data(nullptr), _data_size(0),
-		_song_id(0)
+		_reverb_type(0), _data(nullptr),
+		_data_size(0), _song_id(0)
 	{}
 	virtual ~Akao() noexcept;
-	inline uint16_t* channelOffsets() noexcept {
-		return &_channel_offsets[0];
+
+	inline uint32_t channelMask() const noexcept {
+		return ((uint32_t*)_data)[0];
+	}
+	inline bool isChannelUsed(channel_t channel) const noexcept {
+		return (channelMask() >> channel) & 1;
 	}
 	inline uint16_t channelOffset(channel_t channel) const noexcept {
-		return _channel_offsets[channel];
+		return ((uint16_t*)_data)[2 + channel];
 	}
 	inline const uint8_t* data() const noexcept {
 		return _data;
@@ -35,6 +36,9 @@ public:
 		return _data;
 	}
 	inline const uint8_t* data(channel_t channel) const noexcept {
+		return _data + channelOffset(channel);
+	}
+	inline uint8_t* data(channel_t channel) noexcept {
 		return _data + channelOffset(channel);
 	}
 	inline uint16_t dataSize() const noexcept {
@@ -52,11 +56,5 @@ public:
 	}
 	inline void setReverbType(uint8_t reverb_type) noexcept {
 		_reverb_type = reverb_type;
-	}
-	inline uint8_t channelCount() const noexcept {
-		return _channel_count;
-	}
-	inline void setChannelCount(uint8_t channel_count) noexcept {
-		_channel_count = channel_count;
 	}
 };
