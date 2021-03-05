@@ -271,6 +271,7 @@
   <ItemGroup>
     <ClCompile Include="akao.cpp" />
     <ClCompile Include="akao_exec.cpp" />
+    <ClCompile Include="akao_exec_dec.cpp" />
     <ClCompile Include="akao_file.cpp" />
     <ClCompile Include="akao_instr_file.cpp" />
     <ClCompile Include="psf_file_akao.cpp" />
@@ -288,6 +289,7 @@
   <ItemGroup>
     <ClInclude Include="akao.h" />
     <ClInclude Include="akao_exec.h" />
+    <ClInclude Include="akao_exec_dec.h" />
     <ClInclude Include="akao_file.h" />
     <ClInclude Include="akao_instr_file.h" />
     <ClInclude Include="include\KERNEL.H" />

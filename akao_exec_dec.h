@@ -285,7 +285,7 @@ constexpr auto PAN_LFO_ADDRS_LEN = 52;
 constexpr auto EMPTY_ADPCM_LEN = 32;
 constexpr auto INSTRUMENTS_LEN = 256;
 
-class AkaoExec {
+class AkaoExecDec {
 private:
 	int32_t _unknown49538;
 	int32_t _unknown4953C;
@@ -298,16 +298,23 @@ private:
 	static uint32_t _pan_lfo_addrs[PAN_LFO_ADDRS_LEN]; // 0x4A5CC
 	static uint8_t _empty_adpcm[EMPTY_ADPCM_LEN]; // 0x4A60C
 	int32_t _unknown62E04;
+	uint16_t _unknown62E0A;
 	int32_t _spuActiveVoices; // 0x62F00
 	uint32_t _unknown62F04;
+	int32_t _unknown62F2C;
+	int16_t _unknown62F44;
+	int32_t _unknown62F5C;
 	int32_t _voicesMask62F68;
 	int32_t _reverb_position; // 64 is center, 0x62F70
 	int32_t _previous_time_elapsed; // 0x62F78
 	int32_t _unknown62F8C;
+	int32_t _unknown62FB4;
 	int32_t _unknownReverbRelated62FB8;
+	int32_t _unknown62FD4;
 	int32_t _unknown62FD8;
 	uint8_t _unknown62FEA;
 	int32_t _unknownFlags62FF8; // 0x10: force reverb enabled for all channels
+	uint16_t _unknown62FCC;
 	//int32_t _akaoNumQueuedMessages; // 0x63010
 	AkaoInstrAttr _instruments[INSTRUMENTS_LEN]; // 0x75F28
 	SpuRegisters _spuRegisters; // 0x7EBE4 -> 0x7EC10
@@ -348,17 +355,17 @@ private:
 	void spuNoiseVoice();
 	void spuReverbVoice();
 	void spuPitchLFOVoice();
-	void finishChannel(AkaoPlayerTrack& playerTrack, int argument2);
-	bool loadInstrument(AkaoPlayerTrack& playerTrack, int argument2);
+	void finishChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	bool loadInstrument(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
 	void akaoSetInstrument(AkaoPlayerTrack& playerTrack, uint8_t instrument);
 	void adsrDecayRate(AkaoPlayerTrack& playerTrack);
 	void adsrSustainLevel(AkaoPlayerTrack& playerTrack);
-	void turnOnReverb(AkaoPlayerTrack& playerTrack, int argument2);
-	void turnOffReverb(AkaoPlayerTrack& playerTrack, int argument2);
-	void turnOnNoise(AkaoPlayerTrack& playerTrack, int argument2);
-	void turnOffNoise(AkaoPlayerTrack& playerTrack, int argument2);
-	void turnOnFrequencyModulation(AkaoPlayerTrack& playerTrack, int argument2);
-	void turnOffFrequencyModulation(AkaoPlayerTrack& playerTrack, int argument2);
+	void turnOnReverb(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	void turnOffReverb(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	void turnOnNoise(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	void turnOffNoise(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	void turnOnFrequencyModulation(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
+	void turnOffFrequencyModulation(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, int voice);
 	void turnOnOverlayVoice(AkaoPlayerTrack& playerTrack);
 	int executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, uint32_t voice);
 	inline const uint8_t* curData(channel_t channel) const noexcept {
@@ -372,23 +379,27 @@ private:
 	void akaoSpuSetTransferCallback();
 	void akaoTransferSamples(uint8_t* addr, uint32_t size);
 	void akaoWaitForSpuTransfer();
-	void akaoWriteSpuRegisters(int32_t voice, SpuRegisters& a2);
+	void akaoWriteSpuRegisters(int32_t voice, SpuRegisters &a2);
 	void akaoSetReverbMode(uint8_t reverbType);
 	void akaoReset();
 	void akaoClearSpu();
 	long akaoTimerCallback();
 	bool akaoMain();
-	int akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks);
+	int akaoCalculateVolumeAndPitch(AkaoPlayerTrack &playerTracks);
 	void akaoDspMain();
 	void akaoDspOnTick(AkaoPlayerTrack& playerTracks, AkaoPlayer& player, uint32_t voice);
 	void akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice);
+	void akaoUnknown30380();
+	void turnOffCdInputReverb();
+	void akaoKeyOffVoices(); // 0x2FE48
 	void akaoLoadTracks();
 	void akaoPlayMusic();
-	void akaoStopMusic();
+	void akaoStopMusic(); // 0x29E98
+	void stopMusic(); // 0x29F44
 	void akaoPause();
 	bool akaoDispatchVoice(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, uint32_t voice);
 	void akaoDispatchMessages();
 	uint32_t akaoReadNextNote(AkaoPlayerTrack& playerTrack);
 public:
-	explicit AkaoExec(const Akao& akao, bool loadInstruments2) noexcept;
+	explicit AkaoExecDec(const Akao& akao, bool loadInstruments2) noexcept;
 };

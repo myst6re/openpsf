@@ -12,72 +12,61 @@
 AkaoExec::AkaoExec(const Akao& akao, bool loadInstruments2) noexcept :
 	_akao(akao)
 {
-	resetCallback();
 	SpuInit();
 	uint32_t startAddr = 0x1010 /* 0x800F0000 */, endAddr = 0x1010; /* 0x80166000 */
-	akaoInit(&startAddr, &endAddr);
+	SpuInitMalloc(4, &_spuMemoryManagementTable[0]);
+	SpuMallocWithStartAddr(0x77000, 8192);
+	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
+	akaoLoadInstrumentSet(&startAddr, &endAddr);
+	SpuSetTransferStartAddr(0x76FE0);
+	akaoTransferSamples(_empty_adpcm, EMPTY_ADPCM_LEN);
+	akaoWaitForSpuTransfer();
+	akaoReset();
 	if (loadInstruments2) {
 		akaoLoadInstrumentSet2(0x80168000, 0x801A6000);
 	}
-	/* _akaoMessage = 0x10; // Load and play AKAO
-	_akaoDataAddr = 0x801D0000;
-	akaoPostMessage(); */
+	akaoSetReverbMode(_akao.reverbType());
+	akaoPlayMusic();
 }
 
-void AkaoExec::resetCallback()
+int AkaoExec::akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks)
 {
-	//0x80051520 // load_i32(0x80051534) + 0xC
-	//resetCallback: main2abis(); // 8003D258
-}
+	uint32_t right_volume = ((playerTracks.volume >> 16) * playerTracks.master_volume) >> 7;
 
-int32_t _timeEventDescriptor = 0;
-
-long AkaoExec::akaoTimerCallback()
-{
-	int32_t root_counter_1 = GetRCnt(RCntCNT2);
-	const int32_t mode = 1;
-	uint32_t time_elapsed = VSync(mode);
-
-	if (time_elapsed < _previous_time_elapsed) {
-		_previous_time_elapsed = 0;
-	}
-
-	uint32_t loop_count = (time_elapsed - _previous_time_elapsed) / 66;
-
-	if (loop_count == 0 || loop_count >= 9) {
-		loop_count = 1;
-	}
-
-	_previous_time_elapsed = time_elapsed;
-
-	if (_unknownFlags62FF8 & 0x4) {
-		loop_count *= 2;
-	}
-
-	bool error = false;
-
-	while (loop_count) {
-		if (!akaoMain()) {
-			error = true;
-			break;
+	if (playerTracks.voice_effect_flags & AkaoVoiceEffectFlags::VibratoEnabled
+		&& playerTracks.vibrato_delay_counter == 0) {
+		playerTracks.vibrato_rate_counter -= 1;
+		if (playerTracks.vibrato_rate_counter == 0) {
+			playerTracks.vibrato_rate_counter = playerTracks.vibrato_rate;
+			if (*((uint32_t*)playerTracks.vibrato_lfo_addr) == 0) {
+				playerTracks.vibrato_lfo_addr += *(playerTracks.vibrato_lfo_addr + 2) * 2;
+			}
+			int16_t vibrato_lfo_amplitude = (playerTracks.vibrato_max_amplitude * (*playerTracks.vibrato_lfo_addr)) >> 16;
+			playerTracks.vibrato_lfo_addr += 1;
+			if (vibrato_lfo_amplitude != playerTracks.vibrato_lfo_amplitude) {
+				playerTracks.vibrato_lfo_amplitude = vibrato_lfo_amplitude;
+				playerTracks.spuRegisters.update_flags |= AkaoUpdateFlags::VoicePitch;
+				if (vibrato_lfo_amplitude >= 0) {
+					playerTracks.vibrato_lfo_amplitude *= 2;
+				}
+			}
 		}
-		loop_count -= 1;
 	}
+	if (playerTracks.voice_effect_flags & AkaoVoiceEffectFlags::TremoloEnabled
+		&& playerTracks.tremolo_delay_counter == 0) {
+		playerTracks.tremolo_rate_counter -= 1;
+		if (playerTracks.tremolo_rate_counter == 0) {
+			playerTracks.tremolo_rate_counter = playerTracks.tremolo_rate;
+			if (*((uint32_t*)playerTracks.tremolo_lfo_addr) == 0) {
+				playerTracks.tremolo_lfo_addr += *(playerTracks.tremolo_lfo_addr + 2) << 1;
+			}
+			((((right_volume * (playerTracks.tremolo_depth >> 8)) << 9) >> 16) * (*playerTracks.tremolo_lfo_addr)) >> 15;
+			playerTracks.tremolo_lfo_addr += 1;
+		}
 
-	int32_t root_counter_2 = GetRCnt(RCntCNT2);
-	int32_t diff = root_counter_2 - root_counter_1;
-
-	if (diff <= 0) {
-		diff += 17361;
 	}
+	// TODO
 
-	_unknown62E04 = diff + _unknown4953C + _unknown49540 + _unknown49544;
-	_unknown49544 = diff;
-	_unknown49538 = _unknown4953C;
-	_unknown4953C = _unknown49540;
-	_unknown49540 = _unknown49544;
-
-	return time_elapsed;
 }
 
 void AkaoExec::akaoDspMain()
@@ -361,7 +350,7 @@ void AkaoExec::akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice)
 	// TODO
 }
 
-void AkaoExec::akaoWriteSpuRegisters(int32_t voice, SpuRegisters &spuRegisters)
+void AkaoExec::akaoWriteSpuRegisters(int32_t voice, SpuRegisters& spuRegisters)
 {
 	if (spuRegisters.update_flags & AkaoUpdateFlags::VoicePitch) {
 		SpuSetVoicePitch(voice, spuRegisters.voice_pitch);
@@ -525,22 +514,8 @@ void AkaoExec::akaoStopMusic()
 void AkaoExec::akaoPlayMusic()
 {
 	AkaoTransferSeqBody(_akao);
-	if (_player.song_id == 14) // Main theme
-	{
-		// Save music current position for next time
-		//save_sub_8002A7E8();
-		//save_sub_8002B1A8(_akaoPlayerTracks, dword_800804D0, &_player, &dword_80083394);
-	}
 	akaoStopMusic();
-	/* if (_remember_song_id_1 != 0 && _remember_song_id_1 == _akao.songId()) {
-		resume_sub_8002AABC(0);
-	}
-	else if (_remember_song_id_2 != 0 && _remember_song_id_2 == _akao.songId()) {
-		resume_sub_8002AABC(1);
-	}
-	else { */
-		akaoLoadTracks();
-	//}
+	akaoLoadTracks();
 	_player.song_id = _akao.songId();
 }
 
@@ -578,7 +553,7 @@ void AkaoExec::akaoPause()
 	_unknownFlags62FF8 |= 0x1;
 }
 
-bool AkaoExec::akaoDispatchVoice(AkaoPlayerTrack& playerTrack, AkaoPlayer &player, uint32_t voice)
+bool AkaoExec::akaoDispatchVoice(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, uint32_t voice)
 {
 	uint8_t instruction = 160;
 
@@ -811,33 +786,6 @@ bool AkaoExec::akaoDispatchVoice(AkaoPlayerTrack& playerTrack, AkaoPlayer &playe
 	return true;
 }
 
-void AkaoExec::akaoDispatchMessages()
-{
-	if (_unknown62F8C == 0) {
-		while (!_akaoMessageQueue.empty()) {
-			const AkaoMessage& message = _akaoMessageQueue.front();
-			switch (message.opcode) {
-			case 0x10: break; //8002b1f8
-			default: break;
-			}
-			_akaoMessageQueue.pop();
-		}
-	}
-
-/*
-8002E1BC if load_i32(0x80062F8C) == 0 then
-8002E1D0   saved0 = 0x80081DC8
-8002E1D4   while load_i32(0x80063010) then
-8002E1F4       value0 = load_i32(0x80049548 + (load_u8(saved0) * 4))
-8002E200       argument0 = saved0
-8002E1FC       returnAddress = pc + 8; jump value0
-8002E218       store_i32(0x80063010, load_i32(0x80063010) - 1)
-8002E220       saved0 += 36
-8002E21C   end
-		 end
-*/
-}
-
 uint32_t AkaoExec::akaoReadNextNote(AkaoPlayerTrack& playerTrack)
 {
 	while (true) {
@@ -886,7 +834,7 @@ uint32_t AkaoExec::akaoReadNextNote(AkaoPlayerTrack& playerTrack)
 				case 0xEF: // CPU Conditional Jump
 					playerTrack.addr += 1;
 					if (_player.condition >= *playerTrack.addr) {
-						playerTrack.addr += 3 + *(uint16_t *)(playerTrack.addr + 1);
+						playerTrack.addr += 3 + *(uint16_t*)(playerTrack.addr + 1);
 					}
 					else {
 						playerTrack.addr += 3;
@@ -1098,31 +1046,6 @@ bool AkaoExec::akaoMain()
 	return true;
 }
 
-void AkaoExec::akaoInit(uint32_t* spuTransferStartAddr, AkaoInstrAttr* spuTransferStopAddr)
-{
-	SpuInitMalloc(4, &_spuMemoryManagementTable[0]);
-	SpuMallocWithStartAddr(0x77000, 8192);
-	SpuSetTransferMode(SPU_TRANSFER_BY_DMA);
-	akaoLoadInstrumentSet(spuTransferStartAddr, spuTransferStopAddr);
-	SpuSetTransferStartAddr(0x76FE0);
-	akaoTransferSamples(_empty_adpcm, EMPTY_ADPCM_LEN);
-	akaoWaitForSpuTransfer();
-	akaoReset();
-
-	uint32_t spec = RCntCNT2; // one-eighth of system clock = ~0.24 microseconds
-	 
-	do {
-		_timeEventDescriptor = OpenEvent(spec, EvSpINT, EvMdINTR, akaoTimerCallback);
-	} while (_timeEventDescriptor == -1);
-
-	while (!EnableEvent(_timeEventDescriptor)) {}
-	
-	uint16_t target = 17361; // 17361 * ~0.24 microseconds = ~0.00416664 seconds
-	while (!SetRCnt(spec, target, RCntMdINTR)) {}
-
-	while (!StartRCnt(spec)) {}
-}
-
 void AkaoExec::akaoLoadInstrumentSet(uint32_t* spuTransferStartAddr, AkaoInstrAttr* instruments)
 {
 	SpuSetTransferStartAddr(*spuTransferStartAddr);
@@ -1328,351 +1251,6 @@ void AkaoExec::akaoReset()
 	_player.keyed_voices = 0;
 	_player.key_on_voices = 0;
 	_tempo = 0x66A80000;
-}
-
-int AkaoExec::akaoPostMessage()
-{
-	int ret = 0;
-	_unknown62F8C = 1;
-
-	if (_akaoMessage == 37) {
-		AkaoMessage message;
-		message.opcode = 0x21;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A008 + 1;
-		_akaoMessageQueue.push(message);
-	}
-	else if ((_akaoMessage >= 20 && _akaoMessage < 22)
-		|| _akaoMessage == 0x10 // Play and load akao
-		|| (_akaoMessage >= 24 && _akaoMessage < 26)) {
-		if (_player.song_id != _akao.songId()) {
-			akaoSetReverbMode(_akao.reverbType());
-			AkaoMessage message;
-			message.opcode = _akaoMessage;
-			message.data[0] = uint32_t(_akao.rawData() + 12 /* Before channel_mask */);
-			message.data[1] = _akao.dataSize();
-			message.data[2] = _akao.songId();
-			message.data[3] = _unknown9A008;
-			_akaoMessageQueue.push(message);
-		}
-		else {
-			ret = 1;
-		}
-		/*
-		LBL2DB74:
-8002DB78   saved0 = load_i32(0x800AA004) # _akaoDataAddr
-8002DB80   argument0 = load_u8(saved0)
-		   if argument0 == 'A' then
-8002DB98     if load_u8(saved0 + 0x1) == 'K' then
-			   if load_u8(saved0 + 0x2) == argument0 then
-8002DBB0         value1 = load_u8(saved0 + 0x3)
-8002DBBC         saved0 += 4
-8002DBB8         if value1 == 'O' then
-8002DBC0           id = load_u16(saved0) # id
-8002DBC4           saved0 += 2
-8002DBC8           length = load_u16(saved0) # length
-8002DBCC           saved0 += 2
-8002DBD0           argument0 = load_u16(saved0) # reverb_type
-8002DBE4           saved0 += 8
-8002DBE0           if load_u16(0x800AA14E) != id & 0xFFFF then
-8002DBE8             returnAddress = pc + 8; jump 0x29AF0
-8002DBF4             argument0 = u32(stackPointer) + 16
-8002DBF0             returnAddress = pc + 8; jump 0x2DA30
-8002DBF8             value0 = load_i32(stackPointer + 0x10)
-8002DC00             store_i32(value0 + 0x4, saved0)
-8002DC04             store_i32(value0 + 0x8, length)
-8002DC08             store_i32(value0 + 0xC, id & 0xFFFF)
-8002DC18             store_i32(value0 + 0x10, load_i32(0x800AA008))
-8002DC28             store_i16(value0, load_u16(0x800AA000)) # _akaoMessage
-8002DC24           else
-8002DC30             saved3 = 1
-8002DC2C           end
-				 end
-			   end
-			 end
-		   else
-8002DC38     saved3 = -1
-           end
-8002DC34   jump LBL2DF5C_end
-		*/
-	}
-	else if (_akaoMessage == 36) {
-		AkaoMessage message;
-		message.opcode = 32;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		_akaoMessageQueue.push(message);
-		/*
-		LBL2DC3C:
-8002DC40   argument0 = u32(stackPointer) + 16
-8002DC3C   returnAddress = pc + 8; jump 0x2DA30
-           value1 = load_i32(stackPointer + 0x10)
-8002DC54   store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DC5C   argument0 = load_i32(0x800AA008)
-8002DC64   value0 = 32
-8002DC60   jump LBL2DE14
-LBL2DE14:
-8002DE14 store_i16(value1, value0)
-8002DE1C store_i32(value1 + 0x8, argument0)
-8002DE18 jump LBL2DF5C_end
-		 end
-
-		*/
-	}
-	else if (_akaoMessage < 39) { // Unreachable?
-		AkaoMessage message;
-		message.opcode = 34;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A008 + 1;
-		message.data[3] = _unknown9A008 + 2;
-		_akaoMessageQueue.push(message);
-		/*
-		LBL2DCB0:
-8002DCB4 argument0 = u32(stackPointer) + 16
-8002DCB0 returnAddress = pc + 8; jump 0x2DA30
-8002DCB8 argument0 = load_i32(stackPointer + 0x10)
-8002DCC8 store_i32(argument0 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DCD8 store_i32(argument0 + 0x8, load_i32(0x800AA008))
-8002DCEC store_i32(argument0 + 0xC, u32(load_i32(0x800AA008)) + 1)
-8002DCFC store_i16(argument0, 34)
-8002DD08 store_i32(argument0 + 0x10, u32(load_i32(0x800AA008)) + 2)
-8002DD04 jump LBL2DF5C_end
-		*/
-	}
-	else if (_akaoMessage == 39) {
-		AkaoMessage message;
-		message.opcode = 35;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A008 + 1;
-		message.data[3] = _unknown9A008 + 2;
-		message.data[4] = _unknown9A008 + 3;
-		_akaoMessageQueue.push(message);
-		/*
-		LBL2DD0C:
-8002DD10 argument0 = u32(stackPointer) + 16
-8002DD0C returnAddress = pc + 8; jump 0x2DA30
-8002DD14 argument0 = load_i32(stackPointer + 0x10)
-8002DD24 store_i32(argument0 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DD34 store_i32(argument0 + 0x8, load_i32(0x800AA008))
-8002DD48 store_i32(argument0 + 0xC, u32(load_i32(0x800AA008)) + 1)
-8002DD5C store_i32(argument0 + 0x10, u32(load_i32(0x800AA008)) + 2)
-8002DD6C store_i16(argument0, 35)
-8002DD78 store_i32(argument0 + 0x14, u32(load_i32(0x800AA008)) + 3)
-8002DD74 jump LBL2DF5C_end
-		*/
-	}
-	else if (_akaoMessage == 216) {
-		AkaoMessage message;
-		message.opcode = 208;
-		message.data[0] = _akaoDataAddr;
-		_akaoMessageQueue.push(message);
-		AkaoMessage message;
-		message.opcode = 212;
-		message.data[0] = _akaoDataAddr;
-		_akaoMessageQueue.push(message);
-		/*
-		
-LBL2DD7C:
-8002DD80 argument0 = u32(stackPointer) + 16
-8002DD7C returnAddress = pc + 8; jump 0x2DA30
-8002DD84 value1 = load_i32(stackPointer + 0x10)
-8002DD90 argument0 = u32(stackPointer) + 16
-8002DD94 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DDA0 store_i16(value1, 208)
-8002DD9C returnAddress = pc + 8; jump 0x2DA30
-8002DDA4 value1 = load_i32(stackPointer + 0x10)
-8002DDB4 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DDBC value0 = 212
-8002DDB8 jump LBL2DF54
-LBL2DF54:
-8002DF58 store_i16(value1, value0)
-		*/
-	}
-	else if (_akaoMessage == 217) {
-		AkaoMessage message;
-		message.opcode = 209;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		_akaoMessageQueue.push(message);
-		AkaoMessage message;
-		message.opcode = 213;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		_akaoMessageQueue.push(message);
-		/*
-		
-LBL2DDC0:
-8002DDC4 argument0 = u32(stackPointer) + 16
-8002DDC0 returnAddress = pc + 8; jump 0x2DA30
-8002DDC8 value1 = load_i32(stackPointer + 0x10)
-8002DDD4 argument0 = u32(stackPointer) + 16
-8002DDD8 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DDE0 argument1 = load_i32(0x800AA008)
-8002DDE8 store_i16(value1, 209)
-8002DDF0 store_i32(value1 + 0x8, argument1)
-8002DDEC returnAddress = pc + 8; jump 0x2DA30
-8002DE04 store_i32(load_i32(stackPointer + 0x10) + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DE0C argument0 = load_i32(0x800AA008)
-8002DE10 value0 = 213
-LBL2DE14:
-8002DE14 store_i16(value1, value0)
-8002DE1C store_i32(value1 + 0x8, argument0)
-8002DE18 jump LBL2DF5C_end
-		*/
-	}
-	else if (_akaoMessage == 218) {
-		AkaoMessage message;
-		message.opcode = 210;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A00C;
-		_akaoMessageQueue.push(message);
-		AkaoMessage message;
-		message.opcode = 214;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A00C;
-		_akaoMessageQueue.push(message);
-	/*
-	LBL2DE20:
-8002DE24 argument0 = u32(stackPointer) + 16
-8002DE20 returnAddress = pc + 8; jump 0x2DA30
-8002DE28 value1 = load_i32(stackPointer + 0x10)
-8002DE38 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DE44 argument0 = u32(stackPointer) + 16
-8002DE48 store_i32(value1 + 0x8, load_i32(0x800AA008))
-8002DE50 argument1 = load_i32(0x800AA00C)
-8002DE58 store_i16(value1, 210)
-8002DE60 store_i32(value1 + 0xC, argument1)
-8002DE5C returnAddress = pc + 8; jump 0x2DA30
-8002DE64 value1 = load_i32(stackPointer + 0x10)
-8002DE74 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DE84 store_i32(value1 + 0x8, load_i32(0x800AA008))
-8002DE94 store_i16(value1, 214)
-8002DE9C store_i32(value1 + 0xC, load_i32(0x800AA00C))
-8002DE98 jump LBL2DF5C_end
-*/
-	}
-	else if (_akaoMessage == 153) {
-		AkaoMessage message;
-		message.opcode = 155;
-		_akaoMessageQueue.push(message);
-		AkaoMessage message;
-		message.opcode = 157;
-		_akaoMessageQueue.push(message);
-	/*
-	LBL2DEA0:
-8002DEA4 argument0 = u32(stackPointer) + 16
-8002DEA0 returnAddress = pc + 8; jump 0x2DA30
-8002DEA8 argument0 = u32(stackPointer) + 16
-8002DEB8 store_i16(load_i32(stackPointer + 0x10), 155)
-8002DEB4 returnAddress = pc + 8; jump 0x2DA30
-8002DEBC value1 = load_i32(stackPointer + 0x10)
-8002DEC4 value0 = 157
-8002DEC0 jump LBL2DF54
-LBL2DF54:
-8002DF58 store_i16(value1, value0)
-	*/
-	}
-	else if (_akaoMessage == 152) {
-		AkaoMessage message;
-		message.opcode = 154;
-		_akaoMessageQueue.push(message);
-		AkaoMessage message;
-		message.opcode = 156;
-		_akaoMessageQueue.push(message);
-		/*
-		LBL2DEC8:
-	8002DECC argument0 = u32(stackPointer) + 16
-	8002DEC8 returnAddress = pc + 8; jump 0x2DA30
-	8002DED0 argument0 = u32(stackPointer) + 16
-	8002DEE0 store_i16(load_i32(stackPointer + 0x10), 154)
-	8002DEDC returnAddress = pc + 8; jump 0x2DA30
-	8002DEE4 value1 = load_i32(stackPointer + 0x10)
-	8002DEEC value0 = 156
-	8002DEE8 jump LBL2DF54
-LBL2DF54:
-8002DF58 store_i16(value1, value0)*/
-	}
-	else {
-		AkaoMessage message;
-		message.opcode = _akaoMessage;
-		message.data[0] = _akaoDataAddr;
-		message.data[1] = _unknown9A008;
-		message.data[2] = _unknown9A00C;
-		message.data[3] = _unknown9A010;
-		message.data[4] = _unknown9A014;
-		_akaoMessageQueue.push(message);
-		/*
-		LBL2DEF0:
-8002DEF4 argument0 = u32(stackPointer) + 16
-8002DEF0 returnAddress = pc + 8; jump 0x2DA30
-8002DEF8 value1 = load_i32(stackPointer + 0x10)
-8002DF08 store_i32(value1 + 0x4, load_i32(0x800AA004)) # _akaoDataAddr
-8002DF18 store_i32(value1 + 0x8, load_i32(0x800AA008))
-8002DF28 store_i32(value1 + 0xC, load_i32(0x800AA00C))
-8002DF38 store_i32(value1 + 0x10, load_i32(0x800AA010))
-8002DF48 store_i32(value1 + 0x14, load_i32(0x800AA014))
-8002DF50 value0 = load_u16(0x800AA000) # _akaoMessage
-LBL2DF54:
-8002DF58 store_i16(value1, value0)
-		*/
-	}
-	_unknown62F8C = 0;
-	return ret;
-	/*
-	LBL2DF5C_end:
-8002DF60 store_i32(0x80062F8C, 0)
-8002DF64 value0 = saved3
-	*/
-/*
-8002DA7C stackPointer = u32(stackPointer) + 4294967248
-8002DA80 store_i32(stackPointer + 0x24, saved3)
-8002DAA0 store_i32(stackPointer + 0x28, returnAddress)
-8002DAA4 store_i32(stackPointer + 0x20, saved2)
-8002DAA8 store_i32(stackPointer + 0x1C, saved1)
-8002DAB0 store_i32(stackPointer + 0x18, saved0)
-
-8002DA84 saved3 = 0
-8002DA8C _akaoMessage = load_u16(0x800AA000) # _akaoMessage
-8002DA98 store_i32(0x80062F8C, 1)
-8002DAAC if _akaoMessage != 37 then
-		   if _akaoMessage < 38 then
-			 if _akaoMessage < 22 then
-8002DAC8       branch _akaoMessage >= 20 jump LBL2DB74
-8002DAD0       branch _akaoMessage == 16 jump LBL2DB74
-8002DAD8       jump LBL2DEF0
-			 end
-8002DAE4     branch _akaoMessage < 24 jump LBL2DEF0
-8002DAEC     branch _akaoMessage < 26 jump LBL2DB74
-8002DAF4     branch _akaoMessage == 36 jump LBL2DC3C
-8002DAFC     jump LBL2DEF0
-		   end
-8002DB08   branch _akaoMessage == 153 jump LBL2DEA0
-		   if _akaoMessage < 154 then
-8002DB1C     branch _akaoMessage == 39 jump LBL2DD0C
-8002DB24     branch _akaoMessage < 39 jump LBL2DCB0
-8002DB2C     branch _akaoMessage == 152 jump LBL2DEC8
-8002DB34     jump LBL2DEF0
-		   end
-8002DB40   branch _akaoMessage == 217 jump LBL2DDC0
-		   if _akaoMessage < 218 then
-8002DB50     branch _akaoMessage == 216 jump LBL2DD7C
-8002DB58     jump LBL2DEF0
-		   end
-8002DB64   branch _akaoMessage == 218 jump LBL2DE20
-8002DB6C   jump LBL2DEF0
-[...]
-8002DF68 returnAddress = load_i32(stackPointer + 0x28)
-8002DF6C saved3 = load_i32(stackPointer + 0x24)
-8002DF70 saved2 = load_i32(stackPointer + 0x20)
-8002DF74 saved1 = load_i32(stackPointer + 0x1C)
-8002DF78 saved0 = load_i32(stackPointer + 0x18)
-8002DF7C stackPointer = u32(stackPointer) + 48
-*/
 }
 
 int32_t AkaoExec::getVoicesBits(AkaoPlayerTrack* playerTracks, int32_t voice_bit, int32_t mask)
@@ -2151,7 +1729,7 @@ int AkaoExec::executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, u
 			OPCODE_ADSR_UPDATE(adsr_release_rate, AkaoUpdateFlags::AdsrReleaseMode | AkaoUpdateFlags::AdsrReleaseRate);
 			break;
 		case 0xB3: // ADSR Reset
-			const AkaoInstrAttr& instr = _instruments[playerTrack.instrument];
+			const AkaoInstrAttr & instr = _instruments[playerTrack.instrument];
 			playerTrack.spuRegisters.adsr_attack_rate = instr.adsr_attack_rate;
 			playerTrack.spuRegisters.adsr_decay_rate = instr.adsr_decay_rate;
 			playerTrack.spuRegisters.adsr_sustain_level = instr.adsr_sustain_level;
@@ -2165,7 +1743,7 @@ int AkaoExec::executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, u
 				| AkaoUpdateFlags::AdsrDecayRate | AkaoUpdateFlags::AdsrSustainRate
 				| AkaoUpdateFlags::AdsrReleaseRate | AkaoUpdateFlags::AdsrSustainLevel;
 			if (playerTrack.voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-				AkaoPlayerTrack &otherTrack = _playerTracks[playerTrack.overlay_voice_num];
+				AkaoPlayerTrack& otherTrack = _playerTracks[playerTrack.overlay_voice_num];
 				otherTrack.spuRegisters.adsr_attack_rate = instr.adsr_attack_rate;
 				otherTrack.spuRegisters.adsr_decay_rate = instr.adsr_decay_rate;
 				otherTrack.spuRegisters.adsr_sustain_level = instr.adsr_sustain_level;
@@ -2328,12 +1906,12 @@ int AkaoExec::executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, u
 			return;
 		case 0xCB: // Reset Sound Effects
 			playerTrack.voice_effect_flags &= ~(
-				  AkaoVoiceEffectFlags::VibratoEnabled
+				AkaoVoiceEffectFlags::VibratoEnabled
 				| AkaoVoiceEffectFlags::TremoloEnabled
 				| AkaoVoiceEffectFlags::ChannelPanLfoENabled
 				| AkaoVoiceEffectFlags::PlaybackRateSideChainEnabled
 				| AkaoVoiceEffectFlags::PitchVolumeSideChainEnabled
-			);
+				);
 			turnOffNoise(playerTrack, voice);
 			turnOffFrequencyModulation(playerTrack, voice);
 			turnOffReverb(playerTrack, voice);
@@ -2408,7 +1986,7 @@ int AkaoExec::executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, u
 			}
 			playerTrack.forced_delta_time = length;
 		}
-			break;
+		break;
 		case 0xDD: // Vibrato Depth Slide
 			OPCODE_SLIDE_U16(playerTrack.vibrato_depth, 8);
 			break;
@@ -2492,10 +2070,10 @@ int AkaoExec::executeChannel(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, u
 			return;
 		case 0xF2: // Load instrument (no attack sample)
 			int instrument = data[1];
-			const AkaoInstrAttr &instr = _instruments[instrument];
+			const AkaoInstrAttr& instr = _instruments[instrument];
 			if (playerTrack.use_global_track != 0 || !((_player.keyed_voices & voice) & _active_voices)) {
 				playerTrack.spuRegisters.update_flags |= AkaoUpdateFlags::VoicePitch;
-				const AkaoInstrAttr &playerInstr = _instruments[playerTrack.instrument];
+				const AkaoInstrAttr& playerInstr = _instruments[playerTrack.instrument];
 				if (playerInstr.pitch[0] == 0) {
 					return -2;
 				}
@@ -2642,6 +2220,9 @@ uint32_t AkaoExec::_akaoEndSequence = 0xA0;
 uint32_t AkaoExec::_pan_lfo_addrs[PAN_LFO_ADDRS_LEN] = {
 	0x8004A044, // 0x1FFF
 	0x8004A05C, // 0x7FFF
+	0x8004A068,
+	0x8004A07C,
+
 	// TODO
 };
 
