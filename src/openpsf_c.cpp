@@ -1,5 +1,5 @@
-#include "openpsf_c.h"
-#include "openpsf.h"
+#include "openpsf/openpsf_c.h"
+#include "openpsf/openpsf.h"
 
 Psf* instance(PSF* self) noexcept {
 	return static_cast<Psf*>(self);

@@ -2,7 +2,7 @@
 
 #define OPENPSF_VERSION "1.3.0"
 
-#include <psflib.h>
+#include <psflib/psflib.h>
 #include <string>
 #include <vector>
 #include <cstdint>
