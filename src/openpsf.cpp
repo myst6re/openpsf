@@ -1,19 +1,19 @@
 /****************************************************************************/
 //    Original author: kode54                                               //
 /****************************************************************************/
-#include "openpsf.h"
+#include "openpsf/openpsf.h"
 
 constexpr auto BORK_TIME = 0xC0CAC01A;
 constexpr auto PSF_CHANNEL_COUNT = 2;
 constexpr auto PSF_MAX_SAMPLE_COUNT = 1024;
 
-#include "../highly_experimental/Core/psx.h"
-#include "../highly_experimental/Core/iop.h"
-#include "../highly_experimental/Core/r3000.h"
-#include "../highly_experimental/Core/spu.h"
-#include "../highly_experimental/Core/bios.h"
+#include <highly_experimental/psx.h>
+#include <highly_experimental/iop.h>
+#include <highly_experimental/r3000.h>
+#include <highly_experimental/spu.h>
+#include <highly_experimental/bios.h>
 
-#include <psf2fs.h>
+#include <psflib/psf2fs.h>
 
 struct exec_header_t {
 	uint32_t pc0;

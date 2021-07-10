@@ -26,16 +26,17 @@ resources:
     type: github
     endpoint: myst6re
     name: myst6re/psflib
-  - repository: zlib
-    type: github
-    endpoint: myst6re
-    name: madler/zlib
 
 steps:
 - checkout: self
 - checkout: highly_experimental
+  path: 's\openpsf\highly_experimental'
 - checkout: psflib
-- checkout: zlib
+  path: 's\openpsf\psflib'
+- task: PowerShell@2
+  displayName: 'Prepare Env'
+  inputs:
+    filePath: $(Build.Repository.LocalPath)\openpsf\.ci\prepare.ps1
 - task: CopyFiles@2
   inputs:
     sourceFolder: '$(Build.Repository.LocalPath)\openpsf\.ci'
@@ -69,13 +70,13 @@ steps:
     cleanTargetFolder: false
 - task: CopyFiles@2
   inputs:
-    sourceFolder: '$(Build.Repository.LocalPath)\openpsf'
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\src'
     contents: '*.h'
     targetFolder: '$(Build.Repository.LocalPath)\output\include\libopenpsf'
     cleanTargetFolder: true
 - task: CopyFiles@2
   inputs:
-    sourceFolder: '$(Build.Repository.LocalPath)\psflib'
+    sourceFolder: '$(Build.Repository.LocalPath)\openpsf\psflib'
     contents: 'psflib.h'
     targetFolder: '$(Build.Repository.LocalPath)\output\include'
     cleanTargetFolder: false

@@ -2,7 +2,7 @@
 //    Original author: kode54                                               //
 /****************************************************************************/
 
-#include "circular_buffer.h"
+#include "openpsf/circular_buffer.h"
 #include <algorithm>
 
 auto constexpr silence_threshold = 8;
