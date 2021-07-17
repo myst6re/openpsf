@@ -7,6 +7,11 @@
 
 auto constexpr silence_threshold = 8;
 
+CircularBuffer::CircularBuffer() noexcept :
+	readptr(0), writeptr(0), size(0), used(0)
+{
+}
+
 CircularBuffer::CircularBuffer(unsigned int p_size) :
 	readptr(0), writeptr(0), size(p_size), used(0)
 {
@@ -23,7 +28,7 @@ unsigned CircularBuffer::free_space() noexcept
 	return size - used;
 }
 
-bool CircularBuffer::write(const int16_t* src, unsigned int count)
+bool CircularBuffer::write(const int16_t* src, unsigned int count) noexcept
 {
 	if (count > free_space()) {
 		return false;
@@ -34,7 +39,12 @@ bool CircularBuffer::write(const int16_t* src, unsigned int count)
 		if (delta > count) {
 			delta = count;
 		}
-		std::copy(src, src + delta, buffer.begin() + writeptr);
+		try {
+			std::copy(src, src + delta, buffer.begin() + writeptr);
+		}
+		catch (std::exception e) {
+			return false;
+		}
 		used += delta;
 		writeptr = (writeptr + delta) % size;
 		src += delta;
@@ -44,7 +54,7 @@ bool CircularBuffer::write(const int16_t* src, unsigned int count)
 	return true;
 }
 
-unsigned CircularBuffer::read(int16_t* dst, unsigned int count)
+unsigned CircularBuffer::read(int16_t* dst, unsigned int count) noexcept
 {
 	unsigned done = 0;
 	for (;;) {
@@ -53,7 +63,12 @@ unsigned CircularBuffer::read(int16_t* dst, unsigned int count)
 		if (delta > count) delta = count;
 		if (!delta) break;
 
-		std::copy(buffer.begin() + readptr, buffer.begin() + readptr + delta, dst);
+		try {
+			std::copy(buffer.begin() + readptr, buffer.begin() + readptr + delta, dst);
+		}
+		catch (std::exception e) {
+			return done;
+		}
 		dst += delta;
 		done += delta;
 		readptr = (readptr + delta) % size;
@@ -68,11 +83,17 @@ void CircularBuffer::reset() noexcept
 	readptr = writeptr = used = 0;
 }
 
-void CircularBuffer::resize(unsigned int p_size)
+bool CircularBuffer::resize(unsigned int p_size) noexcept
 {
 	size = p_size;
-	buffer.reserve(p_size);
+	try {
+		buffer.reserve(p_size);
+	}
+	catch (std::exception e) {
+		return false;
+	}
 	reset();
+	return true;
 }
 
 bool CircularBuffer::test_silence() const noexcept
