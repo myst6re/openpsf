@@ -264,13 +264,14 @@ struct AkaoPlayerTrack // 0x96608, size = 0x108
 	//uint32_t adsr_attack_mode;                      // 0xec: ADSR: attack mode
 	//uint32_t adsr_sustain_mode;                     // 0xf0: ADSR: sustain mode
 	//uint32_t adsr_release_mode;                     // 0xf4: ADSR: release mode
-	//uint16_t pitch;                                 // 0xf8: pitch
+	//uint16_t voice_pitch;                           // 0xf8: pitch
 	//uint16_t adsr_attack_rate;                      // 0xfa: ADSR: attack rate
 	//uint16_t adsr_decay_rate;                       // 0xfc: ADSR: decay rate
 	//uint16_t adsr_sustain_level;                    // 0xfe: ADSR: sustain level
 	//uint16_t adsr_sustain_rate;                     // 0x100: ADSR: sustain rate
 	//uint16_t adsr_release_rate;                     // 0x102: ADSR: release rate
-	//uint32_t spu_volume;                            // 0x104: volume (left and right)
+	//uint16_t volume_left;                           // 0x104: volume left
+	//uint16_t volume_right;                          // 0x106: volume right
 };
 
 struct VoiceUnknown9C60 { // size = 12
@@ -301,8 +302,12 @@ private:
 	uint16_t _unknown62E0A;
 	int32_t _spuActiveVoices; // 0x62F00
 	uint32_t _unknown62F04;
+	int32_t _unknown62F28;
 	int32_t _unknown62F2C;
+	int32_t _unknown62F30;
+	int16_t _unknown62F40;
 	int16_t _unknown62F44;
+	int16_t _unknown62F48;
 	int32_t _unknown62F5C;
 	int32_t _voicesMask62F68;
 	int32_t _reverb_position; // 64 is center, 0x62F70
@@ -312,11 +317,14 @@ private:
 	int32_t _unknownReverbRelated62FB8;
 	int32_t _unknown62FD4;
 	int32_t _unknown62FD8;
+	int32_t _unknown62FE4;
+	int32_t _unknown62FE8;
 	uint8_t _unknown62FEA;
 	int32_t _unknownFlags62FF8; // 0x10: force reverb enabled for all channels
 	uint16_t _unknown62FCC;
 	//int32_t _akaoNumQueuedMessages; // 0x63010
-	AkaoInstrAttr _instruments[INSTRUMENTS_LEN]; // 0x75F28
+	AkaoInstrAttr _instruments[32]; // 0x75F28 -> 0x76728 (size = 2048)
+	AkaoInstrAttr _instruments2[18]; // 0x76C68 -> 0x77118 (size = 1200)
 	SpuRegisters _spuRegisters; // 0x7EBE4 -> 0x7EC10
 	//std::queue<AkaoMessage> _akaoMessageQueue; // 0x81DC8
 	int32_t _unknown83338;
@@ -388,12 +396,14 @@ private:
 	int akaoCalculateVolumeAndPitch(AkaoPlayerTrack &playerTracks);
 	void akaoDspMain();
 	void akaoDspOnTick(AkaoPlayerTrack& playerTracks, AkaoPlayer& player, uint32_t voice);
+	void akaoDspOverlayVoice(AkaoPlayerTrack& playerTracks, uint32_t active_voices, uint32_t voice);
 	void akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice);
 	void akaoUnknown30380();
 	void turnOffCdInputReverb();
 	void akaoKeyOffVoices(); // 0x2FE48
 	void akaoLoadTracks();
 	void akaoPlayMusic();
+	int akaoTransferSeqBody();
 	void akaoStopMusic(); // 0x29E98
 	void stopMusic(); // 0x29F44
 	void akaoPause();

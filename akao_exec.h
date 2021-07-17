@@ -283,7 +283,6 @@ typedef uint32_t addr_t;
 
 constexpr auto PAN_LFO_ADDRS_LEN = 52;
 constexpr auto EMPTY_ADPCM_LEN = 32;
-constexpr auto INSTRUMENTS_LEN = 256;
 
 class AkaoExec {
 private:
@@ -309,7 +308,8 @@ private:
 	uint8_t _unknown62FEA;
 	int32_t _unknownFlags62FF8; // 0x10: force reverb enabled for all channels
 	//int32_t _akaoNumQueuedMessages; // 0x63010
-	AkaoInstrAttr _instruments[INSTRUMENTS_LEN]; // 0x75F28
+	AkaoInstrAttr _instruments[MAX_INSTRUMENTS]; // 0x75F28
+	AkaoInstrAttr _instruments2[MAX_INSTRUMENTS]; // 0x76C68
 	SpuRegisters _spuRegisters; // 0x7EBE4 -> 0x7EC10
 	//std::queue<AkaoMessage> _akaoMessageQueue; // 0x81DC8
 	int32_t _unknown83338;
@@ -364,11 +364,8 @@ private:
 	inline const uint8_t* curData(channel_t channel) const noexcept {
 		return _akao.data(channel) + _playerTracks[channel].addr;
 	}
-	void resetCallback();
-	void akaoInit(uint32_t* spuTransferStartAddr, AkaoInstrAttr* spuTransferStopAddr);
-	int akaoPostMessage();
-	void akaoLoadInstrumentSet(uint32_t* spuTransferStartAddr, AkaoInstrAttr* instruments);
-	void akaoLoadInstrumentSet2(uint32_t* spuTransferStartAddr, AkaoInstrAttr* instruments);
+	void akaoLoadInstrumentSet(AkaoInstr& instr);
+	void akaoLoadInstrumentSet2(AkaoInstr& instr);
 	void akaoSpuSetTransferCallback();
 	void akaoTransferSamples(uint8_t* addr, uint32_t size);
 	void akaoWaitForSpuTransfer();
@@ -376,19 +373,19 @@ private:
 	void akaoSetReverbMode(uint8_t reverbType);
 	void akaoReset();
 	void akaoClearSpu();
-	long akaoTimerCallback();
 	bool akaoMain();
 	int akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks);
 	void akaoDspMain();
 	void akaoDspOnTick(AkaoPlayerTrack& playerTracks, AkaoPlayer& player, uint32_t voice);
-	void akaoUnknown2E954(AkaoPlayerTrack& playerTracks, uint32_t voice);
+	void akaoDspOverlayVoice(AkaoPlayerTrack& playerTracks, uint32_t active_voices, uint32_t voice);
+	void akaoKeyOffVoices(); // 0x2FE48
 	void akaoLoadTracks();
 	void akaoPlayMusic();
 	void akaoStopMusic();
 	void akaoPause();
 	bool akaoDispatchVoice(AkaoPlayerTrack& playerTrack, AkaoPlayer& player, uint32_t voice);
-	void akaoDispatchMessages();
 	uint32_t akaoReadNextNote(AkaoPlayerTrack& playerTrack);
 public:
-	explicit AkaoExec(const Akao& akao, bool loadInstruments2) noexcept;
+	explicit AkaoExec(const Akao& akao, AkaoInstr& instr, AkaoInstr& instr2 = AkaoInstr()) noexcept;
+	int32_t decode(int16_t* buffer, uint16_t max_samples) noexcept;
 };

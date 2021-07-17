@@ -111,10 +111,13 @@ int AkaoExecDec::akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks)
 			if (*((uint32_t*)playerTracks.tremolo_lfo_addr) == 0) {
 				playerTracks.tremolo_lfo_addr += *(playerTracks.tremolo_lfo_addr + 2) << 1;
 			}
-			((((right_volume * (playerTracks.tremolo_depth >> 8)) << 9) >> 16) * (*playerTracks.tremolo_lfo_addr)) >> 15;
-			playerTracks.tremolo_lfo_addr += 1;
+			int16_t tremolo_lfo_amplitude = ((((right_volume * (playerTracks.tremolo_depth >> 8)) << 9) >> 16) * (*playerTracks.tremolo_lfo_addr)) >> 15;
+			playerTracks.tremolo_lfo_addr += 2;
+			if (tremolo_lfo_amplitude != playerTracks.tremolo_lfo_amplitude) {
+				playerTracks.tremolo_lfo_amplitude = tremolo_lfo_amplitude;
+				playerTracks.spuRegisters.update_flags |= AkaoUpdateFlags::VolumeLeft | AkaoUpdateFlags::VolumeRight;
+			}
 		}
-		
 	}
 /*
 8002ED34 temporary0 = argument0
@@ -166,31 +169,31 @@ int AkaoExecDec::akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks)
 			 end
 		   end
 		 end
-8002EF04 if load_i32(temporary0 + 0x38) & 0x4 then
-8002EF14   value0 = load_u16(temporary0 + 0x9A) - 1
-8002EF18   store_i16(temporary0 + 0x9A, value0)
+8002EF04 if load_i32(temporary0 + 0x38) & 0x4 then # ChannelPanLfoENabled
+8002EF14   value0 = load_u16(temporary0 + 0x9A) - 1 # pan_lfo_rate_counter
+8002EF18   store_i16(temporary0 + 0x9A, value0) # pan_lfo_rate_counter
 8002EF20   if value0 & 0xFFFF == 0 then
-8002EF2C     value1 = load_i32(temporary0 + 0x20)
-8002EF30     store_i16(temporary0 + 0x9A, load_u16(temporary0 + 0x98))
-8002EF3C     if load_i16(value1) == 0 then
-8002EF4C       if load_i16(value1 + 0x2) == 0 then
-8002EF64         store_i32(temporary0 + 0x20, (load_i16(value1 + 0x4) << 1) + value1)
+8002EF2C     pan_lfo_addr = load_i32(temporary0 + 0x20) # pan_lfo_addr
+8002EF30     store_i16(temporary0 + 0x9A, load_u16(temporary0 + 0x98)) # pan_lfo_rate
+8002EF3C     if load_i16(pan_lfo_addr) == 0 then
+8002EF4C       if load_i16(pan_lfo_addr + 0x2) == 0 then
+8002EF64         store_i32(temporary0 + 0x20, (load_i16(pan_lfo_addr + 0x4) << 1) + pan_lfo_addr)
 			   end
 			 end
-8002EF68     value1 = load_i32(temporary0 + 0x20)
-8002EF74     store_i32(temporary0 + 0x20, u32(value1) + 2)
-8002EF90     argument3 = i32((u32(load_u16(temporary0 + 0x9E)) >> 8) * load_i16(value1)) >> 15
-8002EF94     if argument3 != load_i16(temporary0 + 0xDA) then
-8002EFA0       store_i16(temporary0 + 0xDA, argument3)
-8002EFA8       store_i32(temporary0 + 0xE0, load_i32(temporary0 + 0xE0) | 0x3)
+8002EF68     pan_lfo_addr = load_i32(temporary0 + 0x20) # pan_lfo_addr
+8002EF74     store_i32(temporary0 + 0x20, u32(pan_lfo_addr) + 2)
+8002EF90     argument3 = i32((u32(load_u16(temporary0 + 0x9E)) >> 8) * load_i16(pan_lfo_addr)) >> 15 # pan_lfo_depth
+8002EF94     if argument3 != load_i16(temporary0 + 0xDA) then # pan_lfo_amplitude
+8002EFA0       store_i16(temporary0 + 0xDA, argument3) # pan_lfo_amplitude
+8002EFA8       store_i32(temporary0 + 0xE0, load_i32(temporary0 + 0xE0) | 0x3) # update_flags
 			 end
 		   end
 		 end
-8002EFB8 if load_i32(temporary0 + 0x38) & 0x20 then
-8002EFE0   store_i32(temporary0 + 0xE0, load_i32(temporary0 + 0xE0) | 0x3)
-8002EFE8   argument0 = u32((i32(load_u16(temporary0 + 0xFFF0) << 17) >> 16) * load_i32(temporary0 + 0x2C)) >> 7
+8002EFB8 if load_i32(temporary0 + 0x38) & 0x20 then # PitchVolumeSideChainEnabled
+8002EFE0   store_i32(temporary0 + 0xE0, load_i32(temporary0 + 0xE0) | 0x3) # update_flags
+8002EFE8   argument0 = u32((i32(load_u16(temporary0 + 0xFFF0) << 17) >> 16) * load_i32(temporary0 + 0x2C)) >> 7 # ???, master_volume
 		 end
-8002EFF8 if load_i32(temporary0 + 0xE0) & 0x3 then
+8002EFF8 if load_i32(temporary0 + 0xE0) & 0x3 then # VolumeLeft | VolumeRight
 8002F028   argument0 = i32((argument0 + load_i16(temporary0 + 0xD8)) * (load_u16(0x80062F5E) & 0x7F)) >> 7
 8002F024   if load_u16(0x800AC5A8) then
 8002F02C     value1 = argument2 & 0xFFFF
@@ -221,7 +224,7 @@ int AkaoExecDec::akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks)
 8002F0E0     store_i16(temporary0 + 0x106, i32(argument0 * load_i16(0x80049E44 + value1)) >> 15)
 8002F0DC   end
 		 end
-8002F180 if load_i32(temporary0 + 0x38) & 0x10 then
+8002F180 if load_i32(temporary0 + 0x38) & 0x10 then # PlaybackRateSideChainEnabled
 8002F18C   argument3 = load_u8(0x80062FE6)
 8002F1A4   value1 = load_u16(temporary0 + 0xFFF0) + load_i16(temporary0 + 0xD6) + load_i16(temporary0 + 0x36)
 8002F1A0   if argument3 != 0 then
@@ -234,7 +237,7 @@ int AkaoExecDec::akaoCalculateVolumeAndPitch(AkaoPlayerTrack& playerTracks)
 		   end
 8002F1D4   store_i16(temporary0 + 0xF8, value1 & 0x3FFF)
 8002F1E0   store_i32(temporary0 + 0xE0, load_i32(temporary0 + 0xE0) | 0x10)
-8002F1DC else if load_i32(temporary0 + 0xE0) & 0x10 then
+8002F1DC else if load_i32(temporary0 + 0xE0) & 0x10 then # VoicePitch
 8002F1FC   argument3 = load_u8(0x80062FE6)
 8002F214   value1 = load_i16(temporary0 + 0xD6) + load_i32(temporary0 + 0x30) + load_i16(temporary0 + 0x36)
 8002F210   if argument3 then
@@ -298,7 +301,7 @@ void AkaoExecDec::akaoDspMain()
 				akaoCalculateVolumeAndPitch(_playerTracks2[voice], voice_mask, voice);
 				if (int(_playerTracks2[voice].spuRegisters.update_flags) != 0) {
 					if (_playerTracks2[voice].voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-						AkaoDspOverlayVoice(_playerTracks2[voice], global_active_voices, _playerTracks2[voice].overlay_voice_num - 24);
+						akaoDspOverlayVoice(_playerTracks2[voice], global_active_voices, _playerTracks2[voice].overlay_voice_num - 24);
 						continue;
 					}
 					if (_playerTracks2[voice].voice_effect_flags & AkaoVoiceEffectFlags::AlternateVoiceEnabled) {
@@ -345,7 +348,7 @@ void AkaoExecDec::akaoDspMain()
 						_playerTracks[voice].spuRegisters.volume_right = 0;
 					}
 					if (_playerTracks[voice].voice_effect_flags & AkaoVoiceEffectFlags::OverlayVoiceEnabled) {
-						AkaoDspOverlayVoice(_playerTracks[voice], global_active_voices, _playerTracks[voice].overlay_voice_num - 24);
+						akaoDspOverlayVoice(_playerTracks[voice], global_active_voices, _playerTracks[voice].overlay_voice_num - 24);
 						continue;
 					}
 					if (_playerTracks[voice].voice_effect_flags & AkaoVoiceEffectFlags::AlternateVoiceEnabled) {
@@ -396,6 +399,26 @@ void AkaoExecDec::akaoDspMain()
 
 	if (spu_key) {
 		SpuSetKey(SPU_ON, spu_key);
+	}
+}
+
+void AkaoExecDec::akaoDspOverlayVoice(AkaoPlayerTrack& playerTracks, uint32_t active_voices, uint32_t voice)
+{
+	AkaoPlayerTrack& playerTracksOverlay = _playerTracks[playerTracks.overlay_voice_num];
+
+	uint16_t balance = (127 - (playerTracks.overlay_balance >> 8)) & 0xFFFF;
+	playerTracksOverlay.spuRegisters.volume_left = (playerTracks.spuRegisters.volume_left * playerTracks.overlay_balance) >> 16;
+	playerTracks.spuRegisters.volume_left = (playerTracks.spuRegisters.volume_left * balance) >> 8;
+	playerTracksOverlay.spuRegisters.volume_right = (playerTracks.spuRegisters.volume_right * playerTracks.overlay_balance) >> 16;
+	playerTracks.spuRegisters.volume_right = (playerTracks.spuRegisters.volume_right * balance) >> 8;
+	
+	playerTracksOverlay.spuRegisters.voice_pitch = playerTracks.spuRegisters.voice_pitch;
+	playerTracksOverlay.spuRegisters.update_flags |= playerTracks.spuRegisters.update_flags;
+
+	akaoWriteSpuRegisters(playerTracks.spuRegisters.voice, playerTracks.spuRegisters);
+
+	if (active_voices & (1 << voice)) {
+		akaoWriteSpuRegisters(voice, playerTracksOverlay.spuRegisters);
 	}
 }
 
@@ -607,6 +630,9 @@ void AkaoExecDec::akaoWriteSpuRegisters(int32_t voice, SpuRegisters &spuRegister
 
 void AkaoExecDec::akaoLoadTracks()
 {
+	_player.key_off_voices |= 0xFFFFFF;
+	_player.active_voices &= _akaoDataBeforeChannelMask + 0x4;
+
 	for (channel_t channel = 0; channel < AKAO_CHANNEL_MAX; ++channel) {
 		if (_akao.isChannelUsed(channel)) {
 			AkaoPlayerTrack& playerTrack = _playerTracks[channel];
@@ -646,7 +672,7 @@ void AkaoExecDec::akaoLoadTracks()
 		}
 	}
 
-	_player.tempo = -65536;
+	_player.tempo = 0xFFFF0000;
 	_player.time_counter = 1;
 	_player.tempo_slide_length = 0;
 	_player.reverb_depth = 0;
@@ -668,9 +694,145 @@ void AkaoExecDec::akaoLoadTracks()
 	_player.alternate_voices = 0;
 	_player.overlay_voices = 0;
 
+	if (_unknownFlags62FF8 & 0x1) {
+		_player.saved_active_voices = _player.active_voices;
+		_player.active_voices = 0;
+	}
+
 	spuNoiseVoice();
 	spuReverbVoice();
 	spuPitchLFOVoice();
+
+
+/*
+80029C48 stackPointer = u32(stackPointer) + 4294967248
+80029C4C store_i32(stackPointer + 0x18, saved2)
+80029C60 store_i32(stackPointer + 0x28, returnAddress)
+80029C64 store_i32(stackPointer + 0x24, saved5)
+80029C68 store_i32(stackPointer + 0x20, saved4)
+80029C6C store_i32(stackPointer + 0x1C, saved3)
+80029C70 store_i32(stackPointer + 0x14, saved1)
+80029C74 store_i32(stackPointer + 0x10, saved0)
+80029C7C saved2 = 0x80083584
+80029C84 saved3 = 0x80096608
+80029C9C store_i32(0x800AA114, load_i32(0x800AA114) | 0xFFFFFF)
+80029CA4 store_i32(0x800AA108, load_i32(0x80083584) & 0xFFFFFF)
+80029CA8 if saved1 != 0 then
+80029CAC   saved4 = 1
+80029CB0   saved5 = 16384
+80029CB4   saved0 = u32(saved3) + 164
+		   do
+80029CB8     value0 = saved1 & saved4
+80029CC0     argument0 = saved3
+80029CBC     if value0 != 0 then
+80029CC4       value0 = load_u16(saved2)
+80029CC8       saved2 = u32(saved2) + 2
+80029CCC       saved1 = saved1 ^ saved4
+80029CD0       argument1 = 20
+80029CD4       value0 = value0 + saved2
+80029CD8       store_i32(saved3, value0)
+80029CDC       value0 = 259
+80029CE0       store_i16(saved0 + 0xFFB2, value0)
+80029CE4       value0 = 127
+80029CEC       store_i32(saved0 + 0xFF88, value0)
+80029CE8       returnAddress = pc + 8; jump 0x31820
+80029CF0       value0 = 0x3FFF0000
+80029CF4       store_i32(saved0 + 0xFFA0, value0)
+80029CFC       value0 = 0x80083580
+80029D00       store_i16(saved0 + 0x22, saved5)
+80029D04       store_i16(saved0 + 0xFFBC, saved5)
+80029D08       store_i32(saved0 + 0xFF70, value0)
+80029D0C       store_i16(saved0 + 0x2A, 0)
+80029D10       store_i16(saved0 + 0x28, 0)
+80029D14       store_i32(saved0 + 0xFF90, 0)
+80029D18       store_i16(saved0 + 0x2E, 0)
+80029D1C       store_i16(saved0 + 0xFFC0, 0)
+80029D20       store_i16(saved0 + 0xFFC8, 0)
+80029D24       store_i16(saved0 + 0x20, 0)
+80029D28       store_i16(saved0 + 0x1E, 0)
+80029D2C       store_i16(saved0 + 0xFFBA, 0)
+80029D30       store_i16(saved0 + 0xFFB8, 0)
+80029D34       store_i16(saved0 + 0xFFBE, 0)
+80029D38       store_i16(saved0 + 0xFFC8, 0)
+80029D3C       store_i32(saved0 + 0xFF94, 0)
+80029D40       store_i16(saved0 + 0x14, 0)
+80029D44       store_i16(saved0 + 0xFFCA, 0)
+80029D48       store_i16(saved0 + 0x36, 0)
+80029D4C       store_i16(saved0 + 0xFFFA, 0)
+80029D50       store_i16(saved0 + 0xFFEC, 0)
+80029D54       store_i16(saved0 + 0xFFDA, 0)
+80029D58       store_i16(saved0 + 0xFFFC, 0)
+80029D5C       store_i16(saved0 + 0xFFEE, 0)
+80029D60       store_i16(saved0 + 0xFFDC, 0)
+80029D64       store_i16(saved0 + 0x2, 0)
+80029D68       store_i16(saved0, 0)
+			 end
+80029D6C     saved0 = u32(saved0) + 264
+80029D70     saved3 = u32(saved3) + 264
+80029D78     saved4 = saved4 << 1
+80029D74   while saved1 != 0
+		 end
+80029D84 value0 = 0xFFFF0000
+80029D88 assemblerTemporary = 0x800A0000
+80029D8C store_i32(assemblerTemporary + 0xA11C, value0)
+80029D90 value0 = 1
+80029D94 assemblerTemporary = 0x800A0000
+80029D98 store_i32(assemblerTemporary + 0xA124, value0)
+80029D9C assemblerTemporary = 0x800A0000
+80029DA0 store_i16(assemblerTemporary + 0xA14C, 0)
+80029DA4 assemblerTemporary = 0x800A0000
+80029DA8 store_i32(assemblerTemporary + 0xA144, 0)
+80029DAC assemblerTemporary = 0x800A0000
+80029DB0 store_i16(assemblerTemporary + 0xA154, 0)
+80029DB4 assemblerTemporary = 0x800A0000
+80029DB8 store_i32(assemblerTemporary + 0xA148, 0)
+80029DBC assemblerTemporary = 0x800A0000
+80029DC0 store_i32(assemblerTemporary + 0xA13C, 0)
+80029DC4 assemblerTemporary = 0x800A0000
+80029DC8 store_i16(assemblerTemporary + 0xA160, 0)
+80029DCC assemblerTemporary = 0x800A0000
+80029DD0 store_i16(assemblerTemporary + 0xA15E, 0)
+80029DD4 assemblerTemporary = 0x800A0000
+80029DD8 store_i16(assemblerTemporary + 0xA15C, 0)
+80029DDC assemblerTemporary = 0x800A0000
+80029DE0 store_i16(assemblerTemporary + 0xA162, 0)
+80029DE4 assemblerTemporary = 0x800A0000
+80029DE8 store_i32(assemblerTemporary + 0xA130, 0)
+80029DEC assemblerTemporary = 0x800A0000
+80029DF0 store_i32(assemblerTemporary + 0xA134, 0)
+80029DF4 assemblerTemporary = 0x800A0000
+80029DF8 store_i32(assemblerTemporary + 0xA138, 0)
+80029DFC assemblerTemporary = 0x800A0000
+80029E00 store_i16(assemblerTemporary + 0xA152, 0)
+80029E04 assemblerTemporary = 0x800A0000
+80029E08 store_i16(assemblerTemporary + 0xA150, 0)
+80029E0C assemblerTemporary = 0x800A0000
+80029E10 store_i16(assemblerTemporary + 0xA158, 0)
+80029E14 assemblerTemporary = 0x800A0000
+80029E18 store_i32(assemblerTemporary + 0xA110, 0)
+80029E1C assemblerTemporary = 0x800A0000
+80029E20 store_i32(assemblerTemporary + 0xA10C, 0)
+80029E24 assemblerTemporary = 0x800A0000
+80029E28 store_i32(assemblerTemporary + 0xA12C, 0)
+80029E2C assemblerTemporary = 0x800A0000
+80029E30 store_i32(assemblerTemporary + 0xA128, 0)
+80029E38 if load_i32(0x80062FF8) & 0x1 then
+80029E54   store_i32(0x800AA118, load_i32(0x800AA108))
+80029E4C   store_i32(0x800AA108, 0)
+		 end
+80029E58 returnAddress = pc + 8; jump 0x2FF4C
+80029E60 returnAddress = pc + 8; jump 0x30038
+80029E68 returnAddress = pc + 8; jump 0x30148
+80029E70 returnAddress = load_i32(stackPointer + 0x28)
+80029E74 saved5 = load_i32(stackPointer + 0x24)
+80029E78 saved4 = load_i32(stackPointer + 0x20)
+80029E7C saved3 = load_i32(stackPointer + 0x1C)
+80029E80 saved2 = load_i32(stackPointer + 0x18)
+80029E84 saved1 = load_i32(stackPointer + 0x14)
+80029E88 saved0 = load_i32(stackPointer + 0x10)
+80029E8C stackPointer = u32(stackPointer) + 48
+80029E90 jump returnAddress
+*/
 }
 
 void AkaoExecDec::akaoStopMusic()
@@ -701,7 +863,7 @@ void AkaoExecDec::stopMusic()
 
 void AkaoExecDec::akaoPlayMusic()
 {
-	AkaoTransferSeqBody(_akao);
+	akaoTransferSeqBody();
 	if (_player.song_id == 14) // Main theme
 	{
 		// Save music current position for next time
@@ -719,6 +881,11 @@ void AkaoExecDec::akaoPlayMusic()
 		akaoLoadTracks();
 	//}
 	_player.song_id = _akao.songId();
+}
+
+int AkaoExecDec::akaoTransferSeqBody()
+{
+	// Copy _akao data to _akaoDataBeforeChannelMask
 }
 
 void AkaoExecDec::akaoPause()
@@ -994,7 +1161,7 @@ void AkaoExecDec::akaoDispatchMessages()
 		while (!_akaoMessageQueue.empty()) {
 			const AkaoMessage& message = _akaoMessageQueue.front();
 			switch (message.opcode) {
-			case 0x10: break; //8002b1f8
+			case 0x10: akaoPlayMusic(); break;
 			default: break;
 			}
 			_akaoMessageQueue.pop();
@@ -1335,6 +1502,53 @@ void AkaoExecDec::akaoUnknown30380()
 				}
 				_unknown62F5C = saved;
 			}
+
+			if (_unknown62F48) {
+				_unknown62F48 -= 1;
+				_unknown62FE8 += _unknown62F30;
+			}
+
+			if (_unknown62F40) {
+				_unknown62F40 -= 1;
+				const int saved = _unknown62FE4 + _unknown62F28;
+				if (saved & 0xFF0000 != _unknown62FE4 & 0xFF0000) {
+					for (int voice = 0; voice < AKAO_CHANNEL_MAX; ++voice) {
+						_playerTracks[voice].spuRegisters.update_flags |= AkaoUpdateFlags::VoicePitch;
+					}
+				}
+				_unknown62FE4 = saved;
+			}
+		}
+
+		if (_active_voices != 0) {
+			uint32_t active_voices = _active_voices;
+			uint32_t voice_mask = 0x10000;
+			uint8_t voice = 0;
+			do {
+				if (active_voices & voice_mask) {
+					AkaoPlayerTrack& playerTrack = _playerTracks[voice];
+					if (playerTrack.overlay_balance_slide_length != 0) {
+						playerTrack.overlay_balance_slide_length -= 1;
+
+						int saved0 = playerTrack.overlay_balance + playerTrack.overlay_balance_slope;
+
+						if (playerTrack.overlay_balance_slide_length == 0
+								&& saved0 & 0xFF00 == 0
+								&& playerTrack.overlay_balance_slope < 0) {
+							_key_off_voices |= voice_mask;
+							_key_on_voices &= ~voice_mask;
+							_keyed_voices &= ~voice_mask;
+							playerTrack.addr = (uint8_t *)&AkaoExecDec::_akaoEndSequence;
+						}
+					}
+
+
+					active_voices ^= voice_mask;
+				}
+
+				voice_mask <<= 1;
+				voice += 1;
+			} while (active_voices != 0);
 		}
 	}
 /*
@@ -1375,77 +1589,75 @@ void AkaoExecDec::akaoUnknown30380()
 800304DC       store_i16(0x80062F48, u32(value0) - 1)
 800304E8       store_i32(0x80062FE8, load_i32(0x80062FE8) + argument0)
 			 end
-800304F0     value0 = load_i16(0x80062F40)
-800304F8     if value0 != 0 then
-80030504       value1 = load_i32(0x80062FE4)
-80030518       store_i16(0x80062F40, u32(value0) - 1)
-80030520       saved0 = value1 + load_i32(0x80062F28)
-8003052C       if saved0 & 0xFF0000 != value1 & 0xFF0000 then
-80030534         saved1 = 24
-8003053C         value1 = 0x800966E8
+800304F0     _unknown62F40 = load_i16(0x80062F40)
+800304F8     if _unknown62F40 then
+80030504       _unknown62FE4 = load_i32(0x80062FE4)
+80030518       store_i16(0x80062F40, u32(_unknown62F40) - 1)
+80030520       saved0 = _unknown62FE4 + load_i32(0x80062F28)
+8003052C       if saved0 & 0xFF0000 != _unknown62FE4 & 0xFF0000 then
+80030534         i = 24
+8003053C         value1 = 0x800966E8 # _playerTracks[0].spuRegisters.update_flags
 				 do
-80030544           saved1 -= 1
+80030544           i -= 1
 8003054C           store_i32(value1, load_i32(value1) | 0x10)
 80030554           value1 += 264
-80030550         while saved1 != 0
+80030550         while i != 0
 			   end
 8003055C       store_i32(0x80062FE4, saved0)
 			 end
 		   end
-80030564   argument2 = load_i32(0x800A9FCC)
+80030564   argument2 = load_i32(0x800A9FCC) # _player3.active_voices
 8003056C   if argument2 != 0 then
 80030578     _playerTracks3 = 0x80099788
-8003057C     saved1 = 0x10000
-80030584     argument1 = 0x800997C4
+8003057C     voice_mask = 0x10000
 			 do
-8003058C       if argument2 & saved1 then
-8003059C         if load_u16(argument1 + 0x22) then
-800305AC           argument0 = load_i16(argument1 + 0x8C)
-800305B4           store_i16(argument1 + 0x22, load_u16(argument1 + 0x22) - 1)
-800305C4           saved0 = load_i16(argument1 + 0x8A) + argument0
-800305C0           if load_u16(argument1 + 0x22) == 0
+8003058C       if argument2 & voice_mask then
+8003059C         if load_u16(_playerTracks3 + 0x5E) then
+800305AC           overlay_balance_slope = load_i16(_playerTracks3 + 0xC8)
+800305B4           store_i16(_playerTracks3 + 0x5E, load_u16(_playerTracks3 + 0x5E) - 1)
+800305C4           saved0 = load_i16(_playerTracks3 + 0xC6) + overlay_balance_slope
+800305C0           if load_u16(_playerTracks3 + 0x5E) == 0
 800305CC               && saved0 & 0xFF00 == 0
-800305D4               && argument0 < 0 then
-800305F0             store_i32(0x800A9FD8, saved1 | load_i32(0x800A9FD8))
-80030610             store_i32(0x800A9FD0, ~saved1 & load_i32(0x800A9FD0))
-80030620             store_i32(0x800A9FD4, ~saved1 & load_i32(0x800A9FD4))
-80030628             store_i32(_playerTracks3, 0x80049C40)
-80030638           else if saved0 & 0xFF00 != load_i16(argument1 + 0x8A) & 0xFF00 then
-8003064C             store_i32(argument1 + 0xA4, load_i32(argument1 + 0xA4) | 0x3)
+800305D4               && overlay_balance_slope < 0 then
+800305F0             store_i32(_key_off_voices, voice_mask | _key_off_voices)
+80030610             store_i32(_key_on_voices, ~voice_mask & _key_on_voices)
+80030620             store_i32(_keyed_voices, ~voice_mask & _keyed_voices)
+80030628             store_i32(_playerTracks3, 0x80049C40) # _akaoEndSequence
+80030638           else if saved0 & 0xFF00 != load_i16(_playerTracks3 + 0xC6) & 0xFF00 then
+8003064C             store_i32(_playerTracks3 + 0xE0, load_i32(_playerTracks3 + 0xE0) | 0x3)
 				   end
-L80030650          store_i16(argument1 + 0x8A, saved0)
+L80030650          store_i16(_playerTracks3 + 0xC6, saved0)
 				 end
-8003065C         if load_u16(argument1 + 0x26) then
-80030674           saved0 = load_u16(argument1 + 0x24) + load_i16(argument1 + 0x8E)
-80030678           store_i16(argument1 + 0x26, load_u16(argument1 + 0x26) - 1)
-80030688           if saved0 & 0xFF00 != load_u16(argument1 + 0x24) & 0xFF00 then
-8003069C             store_i32(argument1 + 0xA4, load_i32(argument1 + 0xA4) | 0x3)
+8003065C         if load_u16(_playerTracks3 + 0x62) then
+80030674           saved0 = load_u16(_playerTracks3 + 0x60) + load_i16(_playerTracks3 + 0xCA)
+80030678           store_i16(_playerTracks3 + 0x62, load_u16(_playerTracks3 + 0x62) - 1)
+80030688           if saved0 & 0xFF00 != load_u16(_playerTracks3 + 0x60) & 0xFF00 then
+8003069C             store_i32(_playerTracks3 + 0xE0, load_i32(_playerTracks3 + 0xE0) | 0x3)
 				   end
-800306A0           store_i16(argument1 + 0x24, saved0)
+800306A0           store_i16(_playerTracks3 + 0x60, saved0)
 				 end
-800306AC         if load_u16(argument1 + 0x1E) then
-800306B8           value1 = load_i32(argument1)
-800306C4           saved0 = value1 + load_i32(argument1 + 0x4)
-800306C8           store_i16(argument1 + 0x1E, load_u16(argument1 + 0x1E) - 1)
+800306AC         if load_u16(_playerTracks3 + 0x5A) then
+800306B8           value1 = load_i32(_playerTracks3 + 0x3C)
+800306C4           saved0 = value1 + load_i32(_playerTracks3 + 0x40)
+800306C8           store_i16(_playerTracks3 + 0x5A, load_u16(_playerTracks3 + 0x5A) - 1)
 800306D4           if saved0 & 0xFF00 != value1 & 0xFF00 then
-800306E8             store_i32(argument1 + 0xA4, load_i32(argument1 + 0xA4) | 0x10)
+800306E8             store_i32(_playerTracks3 + 0xE0, load_i32(_playerTracks3 + 0xE0) | 0x10)
 				   end
-800306EC           store_i32(argument1, saved0)
+800306EC           store_i32(_playerTracks3 + 0x3C, saved0)
 				 end
-800306F0         argument2 ^= saved1
+800306F0         argument2 ^= voice_mask
 			   end
-800306F4       saved1 <<= 1
-800306F8       argument1 += 264
-80030700       _playerTracks3 += 264
+800306F4       voice_mask <<= 1
+800306F8       _playerTracks3 += 264
 800306FC     while argument2 != 0
 		   end
 80030714   if load_u16(0x8009C5A8) then
 80030718     saved6 = 0x8009C5A0
 80030720     _playerTracks2 = 0x80097EC8
 80030724     saved1 = 1
-8003072C     saved2 = 0x8009A168
-80030730     saved0 = 0x8009C5A8
-80030734     saved3 = 0x800966E8
+8003072C     saved2 = 0x8009A168 # _player2.active_voices
+80030730     saved0 = 0x8009C5A8 # _spuCommonAttr + 0x30
+80030734     saved3 = 0x800966E8 # _playerTracks.spuRegisters.update_flags
 80030738     saved5 = 0x80097FA8
 L8003073C:   do
 80030744      if load_u16(saved0) then

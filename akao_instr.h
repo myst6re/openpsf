@@ -2,6 +2,8 @@
 
 #include <cstdint>
 
+constexpr auto MAX_INSTRUMENTS = 256;
+
 struct AkaoInstrAttr // 0x75F28 size: 64
 {
 	/* offsets */
@@ -55,4 +57,9 @@ public:
 	inline void setSpuAddr(uint32_t spu_addr) noexcept {
 		_spu_addr = spu_addr;
 	}
+};
+
+struct AkaoInstr {
+	AkaoInstrAttr attrs[MAX_INSTRUMENTS];
+	AkaoInstrAdpcm adpcm;
 };

@@ -274,6 +274,7 @@
     <ClCompile Include="akao_exec_dec.cpp" />
     <ClCompile Include="akao_file.cpp" />
     <ClCompile Include="akao_instr_file.cpp" />
+    <ClCompile Include="LIBSPU.CPP" />
     <ClCompile Include="psf_file_akao.cpp" />
     <ClCompile Include="circular_buffer.cpp" />
     <ClCompile Include="environment.cpp" />

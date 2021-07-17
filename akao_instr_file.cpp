@@ -21,6 +21,8 @@ int AkaoInstrFile::open(AkaoInstrAttr* akaoAttr, int max_instruments) const noex
 		if (fread(&attrs, sizeof(AkaoInstrAttr), 1, handle) != 1) {
 			return i;
 		}
+
+		akaoAttr[i] = attrs;
 	}
 
 	return max_instruments;
