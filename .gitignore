@@ -1,4 +1,8 @@
-*.user
-Debug*
-Release*
-.vs
+build/
+.build/
+install/
+.install/
+deploy/
+.deploy/
+
+*.code-workspace
