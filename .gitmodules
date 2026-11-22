@@ -1,0 +1,6 @@
+[submodule "psflib"]
+	path = psflib
+	url = git@github.com:myst6re/psflib.git
+[submodule "highly_experimental"]
+	path = highly_experimental
+	url = git@github.com:myst6re/highly_experimental.git

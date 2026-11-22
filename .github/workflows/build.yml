@@ -1,0 +1,68 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  create: null
+
+jobs:
+  main_build:
+    name: Windows x86
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+
+    env:
+      CMAKE_GENERATOR: Ninja
+      CMAKE_BUILD_TYPE: Release
+
+    steps:
+    - uses: actions/checkout@main
+      with:
+        submodules: recursive
+        fetch-depth: 0
+
+    - name: Env Script (Windows)
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x86
+
+    - name: Configure env
+      shell: bash
+      run: |
+        echo "$IQTA_TOOLS/Ninja" >> $GITHUB_PATH
+        echo "$IQTA_TOOLS/CMake_64/bin" >> $GITHUB_PATH
+
+    - name: Build
+      id: main_build
+      run: |
+        cmake -Bbuild --preset=release-config
+        cmake --build build -j3
+        cmake --install build --prefix install
+
+    - name: Create zip
+      shell: bash
+      working-directory: ./install
+      run: |
+        OPENPSF_VERSION=$(grep '^CMAKE_PROJECT_VERSION:STATIC=' ../build/CMakeCache.txt | cut -d= -f2)
+        7z a ../openpsf-${OPENPSF_VERSION}-Release_x86.zip .
+
+    - name: Upload
+      uses: actions/upload-artifact@v7
+      with:
+        name: artifact-openpsf-release-x86
+        path: ${{ github.workspace }}/openpsf-*.zip
+
+    - name: Deploy Package
+      if: github.event.ref_type == 'tag'
+      uses: crowbarmaster/GH-Automatic-Releases@latest
+      with:
+        repo_token: "${{ secrets.GITHUB_TOKEN }}"
+        automatic_release_tag: ${{ github.event.ref }}
+        prerelease: false
+        generate_notes: true
+        title: ${{ github.event.ref }}
+        files: |
+          openpsf-*.zip

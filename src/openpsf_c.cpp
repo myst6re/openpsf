@@ -1,6 +1,10 @@
 #include "openpsf/openpsf_c.h"
 #include "openpsf/openpsf.h"
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 Psf* instance(PSF* self) noexcept {
 	return static_cast<Psf*>(self);
 }
@@ -123,3 +127,7 @@ const char* openpsf_get_last_status(PSF* self)
 	}
 	return instance(self)->get_last_status();
 }
+
+#if defined(__cplusplus)
+}
+#endif

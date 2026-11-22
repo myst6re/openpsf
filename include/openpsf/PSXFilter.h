@@ -4,7 +4,7 @@
 
 #pragma once
 
-class CPSXFilter  
+class CPSXFilter
 {
 public:
 	void Process(float *stereobuffer, int nSamples);

@@ -2,6 +2,10 @@
 
 #include <stdint.h>
 
+#if defined(__cplusplus)
+extern "C" {
+#endif
+
 #ifdef OPENPSF_EXPORTS
 #define DLLEXPORT __declspec(dllexport)
 #elif defined(OPENPSF_IMPORTS)
@@ -10,9 +14,6 @@
 #define DLLEXPORT
 #endif
 
-#if defined(__cplusplus)
-extern "C" {
-#endif
 	typedef void PSF;
 
 	DLLEXPORT bool openpsf_initialize_psx_core(const char* bios_path);

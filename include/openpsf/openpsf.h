@@ -1,17 +1,14 @@
 #pragma once
 
-#define OPENPSF_VERSION "1.3.0"
-
-#include <psflib/psflib.h>
 #include <string>
-#include <vector>
-#include <cstdint>
 
 #include "PSXFilter.h"
 #include "circular_buffer.h"
 #include "openpsf_c.h"
 
 constexpr auto HEBIOS_SIZE = 524288;
+
+struct psf_file_callbacks;
 
 struct psf_info_meta_state
 {
@@ -29,7 +26,7 @@ enum PsfFlags {
 	Debug = 0x8
 };
 
-PsfFlags operator|(PsfFlags flags, PsfFlags other) noexcept {
+static inline PsfFlags operator|(PsfFlags flags, PsfFlags other) noexcept {
 	return static_cast<PsfFlags>(static_cast<int>(flags) | static_cast<int>(other));
 }
 
@@ -56,7 +53,7 @@ private:
 	char* last_error;
 	std::string last_status;
 	psf_info_meta_state info_state;
-	psf_file_callbacks psf_file_system;
+	psf_file_callbacks *psf_file_system;
 	bool is_open;
 
 	static bool psx_core_was_initialized;

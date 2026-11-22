@@ -1,0 +1,8 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+find_dependency(ZLIB)
+
+include("${CMAKE_CURRENT_LIST_DIR}/openpsfTargets.cmake")
+
+check_required_components(openpsf)

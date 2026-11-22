@@ -294,7 +294,7 @@ Psf::Psf(PsfFlags flags, int end_silence_seconds) :
 	info_state(psf_info_meta_state()),
 	is_open(false)
 {
-	psf_file_system = {
+	psf_file_system = new psf_file_callbacks {
 		"\\/|:",
 		nullptr,
 		psf_file_fopen,
@@ -328,16 +328,16 @@ void Psf::close() noexcept
 
 uint8_t Psf::open_version(const char* path) noexcept
 {
-	void* handle = psf_file_system.fopen(psf_file_system.context, path);
+	void* handle = psf_file_system->fopen(psf_file_system->context, path);
 	if (handle == nullptr) {
 		last_error = "Failed to open file";
 		return 0;
 	}
 
-	psf_file_system.fseek(handle, 3, SEEK_SET);
+	psf_file_system->fseek(handle, 3, SEEK_SET);
 	uint8_t version = 0;
-	psf_file_system.fread(&version, 1, 1, handle);
-	psf_file_system.fclose(handle);
+	psf_file_system->fread(&version, 1, 1, handle);
+	psf_file_system->fclose(handle);
 	return version;
 }
 
@@ -408,7 +408,7 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 		state.psf2fs = psf2fs;
 	}
 
-	const int ret = psf_load(p_path, &psf_file_system, 0, psf_load_cb, &state, psf_info_meta, &info_state, 0, print_message, &last_status);
+	const int ret = psf_load(p_path, psf_file_system, 0, psf_load_cb, &state, psf_info_meta, &info_state, 0, print_message, &last_status);
 
 	if (ret < 0) {
 		last_error = "Invalid PSF file";
