@@ -1,15 +1,25 @@
 #pragma once
 
 #include <stdint.h>
+#include <stddef.h>
+#if !defined(__cplusplus)
+#include <stdbool.h>
+#endif
 
 #if defined(__cplusplus)
 extern "C" {
 #endif
 
+#if defined(_WIN32) || defined(__CYGWIN__)
 #ifdef OPENPSF_EXPORTS
 #define DLLEXPORT __declspec(dllexport)
 #elif defined(OPENPSF_IMPORTS)
 #define DLLEXPORT __declspec(dllimport)
+#else
+#define DLLEXPORT
+#endif
+#elif defined(OPENPSF_EXPORTS) && defined(__GNUC__)
+#define DLLEXPORT __attribute__((visibility("default")))
 #else
 #define DLLEXPORT
 #endif
