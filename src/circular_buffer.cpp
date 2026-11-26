@@ -8,17 +8,16 @@
 auto constexpr silence_threshold = 8;
 
 CircularBuffer::CircularBuffer(unsigned int p_size) :
-	readptr(0), writeptr(0), size(p_size), used(0)
+	buffer(p_size), readptr(0), writeptr(0), used(0), size(p_size)
 {
-	buffer.reserve(p_size);
 }
 
-unsigned CircularBuffer::data_available() noexcept
+unsigned CircularBuffer::data_available() const noexcept
 {
 	return used;
 }
 
-unsigned CircularBuffer::free_space() noexcept
+unsigned CircularBuffer::free_space() const noexcept
 {
 	return size - used;
 }
@@ -63,6 +62,18 @@ unsigned CircularBuffer::read(int16_t* dst, unsigned int count)
 	return done;
 }
 
+unsigned CircularBuffer::skip(unsigned int count) noexcept
+{
+	if (count > used) {
+		count = used;
+	}
+	if (count > 0) {
+		readptr = (readptr + count) % size;
+		used -= count;
+	}
+	return count;
+}
+
 void CircularBuffer::reset() noexcept
 {
 	readptr = writeptr = used = 0;
@@ -71,17 +82,18 @@ void CircularBuffer::reset() noexcept
 void CircularBuffer::resize(unsigned int p_size)
 {
 	size = p_size;
-	buffer.reserve(p_size);
+	buffer.assign(p_size, 0);
 	reset();
 }
 
+// True when every buffered (not yet read) sample is within the silence threshold
 bool CircularBuffer::test_silence() const noexcept
 {
-	int16_t* begin = (int16_t*)&buffer[0];
-	int16_t first = *begin;
-	*begin = silence_threshold * 2;
-	int16_t* p = begin + size;
-	while ((unsigned int)(*--p + silence_threshold) <= (unsigned int)silence_threshold * 2) {}
-	*begin = first;
-	return p == begin && ((unsigned int)(first + silence_threshold) <= (unsigned int)silence_threshold * 2);
+	auto is_silent = [](int16_t sample) noexcept {
+		return sample >= -silence_threshold && sample <= silence_threshold;
+	};
+	const unsigned int first_part = used < size - readptr ? used : size - readptr;
+	const auto begin = buffer.begin() + readptr;
+	return std::all_of(begin, begin + first_part, is_silent)
+		&& std::all_of(buffer.begin(), buffer.begin() + (used - first_part), is_silent);
 }

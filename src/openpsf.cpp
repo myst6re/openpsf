@@ -3,6 +3,19 @@
 /****************************************************************************/
 #include "openpsf/openpsf.h"
 
+#include <psflib/psflib.h>
+#include <stdint.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+
+#ifdef _MSC_VER
+#define strcasecmp _stricmp
+#define strncasecmp _strnicmp
+#else
+#include <strings.h>
+#endif
+
 constexpr auto BORK_TIME = 0xC0CAC01A;
 constexpr auto PSF_CHANNEL_COUNT = 2;
 constexpr auto PSF_MAX_SAMPLE_COUNT = 1024;
@@ -117,7 +130,7 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 
 	psf_info_meta_state* state = static_cast<psf_info_meta_state*>(context);
 
-	if (_stricmp(name, "length") == 0)
+	if (strcasecmp(name, "length") == 0)
 	{
 		const int temp = parse_time_crap(value);
 		if (temp != BORK_TIME)
@@ -125,7 +138,7 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 			state->tag_song_ms = temp;
 		}
 	}
-	else if (_stricmp(name, "fade") == 0)
+	else if (strcasecmp(name, "fade") == 0)
 	{
 		const int temp = parse_time_crap(value);
 		if (temp != BORK_TIME)
@@ -133,14 +146,14 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 			state->tag_fade_ms = temp;
 		}
 	}
-	else if (_stricmp(name, "_lib") == 0)
+	else if (strcasecmp(name, "_lib") == 0)
 	{
 	}
-	else if (_stricmp(name, "_refresh") == 0)
+	else if (strcasecmp(name, "_refresh") == 0)
 	{
 		state->refresh = atoi(value);
 	}
-	else if (_stricmp(name, "looping") == 0)
+	else if (strcasecmp(name, "looping") == 0)
 	{
 		state->looping = atoi(value);
 	}
@@ -152,14 +165,17 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 	return 0;
 }
 
-#if defined(_M_IX86) || defined(_M_X64) || defined(_M_ARM)
-constexpr auto byte_order_is_big_endian = false;
-#else
+#if defined(__BYTE_ORDER__) && defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
 constexpr auto byte_order_is_big_endian = true;
+#else
+constexpr auto byte_order_is_big_endian = false; // MSVC only targets little-endian CPUs
 #endif
 
 uint32_t byteswap_if_be_t(uint32_t p_param) noexcept {
-	return byte_order_is_big_endian ? _byteswap_ulong(p_param) : p_param;
+	if (!byte_order_is_big_endian) {
+		return p_param;
+	}
+	return (p_param >> 24) | ((p_param >> 8) & 0xFF00u) | ((p_param << 8) & 0xFF0000u) | (p_param << 24);
 }
 
 int psf1_load_callback(psf_load_state* state, const uint8_t* exe, size_t exe_size,
@@ -182,7 +198,7 @@ int psf1_load_callback(psf_load_state* state, const uint8_t* exe, size_t exe_siz
 	iop_upload_to_ram(pIOP, addr, exe + 0x800, size);
 
 	if (!state->meta_state->refresh) {
-		if (_strnicmp((const char*)exe + 113, "Europe", 6) == 0) {
+		if (strncasecmp((const char*)exe + 113, "Europe", 6) == 0) {
 			state->meta_state->refresh = 50;
 		}
 		else {
@@ -216,13 +232,22 @@ static int EMU_CALL virtual_readfile(void *context, const char *path, int offset
 	return psf2fs_virtual_readfile(context, path, offset, buffer, length);
 }
 
-static void * psf_file_fopen(void * context, const char* uri) noexcept
+static FILE* open_binary_file(const char* path) noexcept
 {
+#ifdef _MSC_VER
 	FILE* handle = nullptr;
-	if (fopen_s(&handle, uri, "rb") != 0) {
+	if (fopen_s(&handle, path, "rb") != 0) {
 		return nullptr;
 	}
 	return handle;
+#else
+	return fopen(path, "rb");
+#endif
+}
+
+static void * psf_file_fopen(void * context, const char* uri) noexcept
+{
+	return open_binary_file(uri);
 }
 
 static size_t psf_file_fread(void* buffer, size_t size, size_t count, void* handle) noexcept
@@ -260,12 +285,15 @@ uint8_t Psf::bios[HEBIOS_SIZE] = {};
 
 bool Psf::initialize_psx_core(const char* bios_path) noexcept
 {
-	FILE* handle = nullptr;
-	if (fopen_s(&handle, bios_path, "rb") != 0 || handle == nullptr) {
+	FILE* handle = open_binary_file(bios_path);
+	if (handle == nullptr) {
 		return false;
 	}
 
-	if (fread(&bios[0], sizeof(uint8_t), HEBIOS_SIZE, handle) != sizeof(uint8_t) * HEBIOS_SIZE) {
+	const size_t bytes_read = fread(&bios[0], sizeof(uint8_t), HEBIOS_SIZE, handle);
+	fclose(handle);
+
+	if (bytes_read != sizeof(uint8_t) * HEBIOS_SIZE) {
 		return false;
 	}
 
@@ -319,6 +347,7 @@ Psf::~Psf()
 		delete[] psx_initial_state;
 	}
 	delete[] sample_buffer;
+	delete psf_file_system;
 }
 
 void Psf::close() noexcept
@@ -633,6 +662,9 @@ int Psf::decode(int16_t* data, int sample_count)
 		if (remainder > 0) {
 			written = remainder;
 		}
+		else if (data == nullptr && silence_test_buffer.data_available() > 0) {
+			written = silence_test_buffer.skip(samples * PSF_CHANNEL_COUNT) / PSF_CHANNEL_COUNT;
+		}
 		else {
 			written = samples;
 			source_buffer = data;
@@ -713,8 +745,8 @@ bool Psf::is_our_path(const char* p_full_path, const char* p_extension) noexcept
 	if (p_extension == nullptr) {
 		return false;
 	}
-	return !_stricmp(p_extension, "psf") || !_stricmp(p_extension, "minipsf") ||
-		!_stricmp(p_extension, "psf2") || !_stricmp(p_extension, "minipsf2");
+	return !strcasecmp(p_extension, "psf") || !strcasecmp(p_extension, "minipsf") ||
+		!strcasecmp(p_extension, "psf2") || !strcasecmp(p_extension, "minipsf2");
 }
 
 unsigned int Psf::ms_to_samples(unsigned int ms) const noexcept

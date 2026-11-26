@@ -50,7 +50,7 @@ private:
 	unsigned int data_written;
 	unsigned int song_len, fade_len;
 	uint16_t samplerate;
-	char* last_error;
+	const char* last_error;
 	std::string last_status;
 	psf_info_meta_state info_state;
 	psf_file_callbacks *psf_file_system;
