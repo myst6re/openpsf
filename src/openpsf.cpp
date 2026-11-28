@@ -4,10 +4,10 @@
 #include "openpsf/openpsf.h"
 
 #include <psflib/psflib.h>
-#include <stdint.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 
 #ifdef _MSC_VER
 #define strcasecmp _stricmp
@@ -24,6 +24,7 @@ constexpr auto PSF_MAX_SAMPLE_COUNT = 1024;
 #include <highly_experimental/iop.h>
 #include <highly_experimental/r3000.h>
 #include <highly_experimental/spu.h>
+#include <highly_experimental/spucore.h>
 #include <highly_experimental/bios.h>
 
 #include <psflib/psf2fs.h>
@@ -160,6 +161,10 @@ static int psf_info_meta(void* context, const char* name, const char* value) noe
 	else if (*name == '_')
 	{
 		return -1;
+	}
+	else if (*name != '\0')
+	{
+		state->tags[std::string(name)] = std::string(value);
 	}
 
 	return 0;
@@ -311,6 +316,7 @@ bool Psf::initialize_psx_core(const char* bios_path) noexcept
 Psf::Psf(PsfFlags flags, int end_silence_seconds) :
 	compat(flags & Debug ? IOP_COMPAT_HARSH : IOP_COMPAT_FRIENDLY), reverb(!(flags & NoReverb)),
 	simulate_frequency_response(!(flags & NoSimulateFrequencyResponse)),
+	spu_fixes(SPUCORE_FIX_ALL),
 	suppress_opening_silence(flags & SuppressOpeningSilence),
 	end_silence_seconds(end_silence_seconds), no_loop(true),
 	eof(false), opening_silence_suppressed(false),
@@ -332,6 +338,12 @@ Psf::Psf(PsfFlags flags, int end_silence_seconds) :
 		psf_file_ftell
 	};
 	sample_buffer = new int16_t[PSF_MAX_SAMPLE_COUNT * PSF_CHANNEL_COUNT];
+	if (flags & LegacyReverb) {
+		spu_fixes &= ~SPUCORE_FIX_REVERB_ALGO;
+	}
+	if (flags & LegacyReverbUpsampling) {
+		spu_fixes &= ~SPUCORE_FIX_REVERB_UPSAMPLE;
+	}
 }
 
 Psf::~Psf()
@@ -475,6 +487,7 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 		void* pIOP = psx_get_iop_state(psx_state);
 		iop_set_compat(pIOP, compat);
 		spu_enable_reverb(iop_get_spu_state(pIOP), reverb);
+		spu_set_fixes(iop_get_spu_state(pIOP), spu_fixes);
 	}
 
 	eof = false;
@@ -496,6 +509,13 @@ bool Psf::open(const char* p_path, bool infinite, int default_length, int defaul
 	is_open = true;
 
 	return true;
+}
+
+const char *Psf::get_tag(const char* tag_name)
+{
+	std::string name(tag_name);
+	std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c){return std::tolower(c);});
+	return info_state.tags[name].c_str();
 }
 
 int Psf::get_sample_count() const noexcept
@@ -544,7 +564,7 @@ int Psf::decode(int16_t* data, int sample_count)
 		return 0;
 	}
 
-	if (sample_count > PSF_MAX_SAMPLE_COUNT) {
+	if (data != nullptr && sample_count > PSF_MAX_SAMPLE_COUNT) {
 		sample_count = PSF_MAX_SAMPLE_COUNT;
 	}
 
@@ -557,7 +577,7 @@ int Psf::decode(int16_t* data, int sample_count)
 		const unsigned start_skip_max = 30 * samplerate;
 
 		while (silence < start_skip_max) {
-			unsigned int samples_to_render = samples;
+			unsigned int samples_to_render = samples > PSF_MAX_SAMPLE_COUNT ? PSF_MAX_SAMPLE_COUNT : samples;
 			err = psx_execute(psx_state, 0x7FFFFFFF, safe_buffer, &samples_to_render, 0);
 			if (err <= -2) {
 				last_error = "PSX unrecoverable error (opening silence)";
@@ -668,13 +688,83 @@ int Psf::decode(int16_t* data, int sample_count)
 		else {
 			written = samples;
 			source_buffer = data;
-			err = psx_execute(psx_state, 0x7FFFFFFF, data != nullptr ? data : nullptr, &written, 0);
-			if (err <= -2) {
-				last_error = "PSX unrecoverable error";
-				return -1;
+
+			if (data == nullptr) { // Fast seek
+				void* pSPU = iop_get_spu_state(psx_get_iop_state(psx_state));
+				const unsigned int warmup = 2048;
+
+				if (samples > warmup) {
+					unsigned int fast_samples = samples - warmup;
+					spu_enable_main(pSPU, 0);
+					spu_enable_reverb(pSPU, 0);
+
+					unsigned int done_fast = 0;
+					while (done_fast < fast_samples) {
+						unsigned int step = fast_samples - done_fast;
+						err = psx_execute(psx_state, 0x7FFFFFFF, nullptr, &step, 0);
+						if (err <= -2) {
+							spu_enable_main(pSPU, 1);
+							spu_enable_reverb(pSPU, reverb);
+							last_error = "PSX unrecoverable error";
+							return -1;
+						}
+						done_fast += step;
+						if (step == 0 || err == -1) {
+							eof = true;
+							break;
+						}
+					}
+
+					spu_enable_main(pSPU, 1);
+					spu_enable_reverb(pSPU, reverb);
+
+					if (eof) {
+						written = done_fast;
+					} else {
+						unsigned int done_warm = 0;
+						unsigned int warm_target = samples - done_fast;
+						while (done_warm < warm_target) {
+							unsigned int step = warm_target - done_warm;
+							err = psx_execute(psx_state, 0x7FFFFFFF, nullptr, &step, 0);
+							if (err <= -2) {
+								last_error = "PSX unrecoverable error";
+								return -1;
+							}
+							done_warm += step;
+							if (step == 0 || err == -1) {
+								eof = true;
+								break;
+							}
+						}
+						written = done_fast + done_warm;
+					}
+				} else {
+					unsigned int done = 0;
+					while (done < samples) {
+						unsigned int step = samples - done;
+						err = psx_execute(psx_state, 0x7FFFFFFF, nullptr, &step, 0);
+						if (err <= -2) {
+							last_error = "PSX unrecoverable error";
+							return -1;
+						}
+						done += step;
+						if (step == 0 || err == -1) {
+							eof = true;
+							break;
+						}
+					}
+					written = done;
+				}
 			}
-			if (written == 0 || err == -1) {
-				eof = true;
+			else {
+				err = psx_execute(psx_state, 0x7FFFFFFF, data, &written, 0);
+				if (err <= -2) {
+					last_error = "PSX unrecoverable error";
+					return -1;
+				}
+				if (written == 0 || err == -1) {
+					eof = true;
+				}
 			}
 		}
 	}
@@ -692,12 +782,14 @@ int Psf::decode(int16_t* data, int sample_count)
 		for (n = d_start; n < data_written; ++n) {
 			if (n > song_len) {
 				if (n >= song_len + fade_len) {
-					*(int32_t*)samples_a = 0;
+					samples_a[0] = 0;
+					samples_a[1] = 0;
 				}
 				else {
-					const unsigned int cur = song_len + fade_len - n;
-					samples_a[0] = int16_t(int(samples_a[0] * cur) / fade_len);
-					samples_a[1] = int16_t(int(samples_a[1] * cur) / fade_len);
+					const int64_t cur = static_cast<int64_t>(song_len + fade_len - n);
+					const int64_t total_fade = static_cast<int64_t>(fade_len);
+					samples_a[0] = static_cast<int16_t>((static_cast<int64_t>(samples_a[0]) * cur) / total_fade);
+					samples_a[1] = static_cast<int16_t>((static_cast<int64_t>(samples_a[1]) * cur) / total_fade);
 				}
 			}
 			samples_a += 2;

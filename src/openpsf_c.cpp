@@ -36,6 +36,11 @@ PSF* openpsf_create_with_params(bool reverb, bool simulate_frequency_response, b
 	return new Psf(flags, end_silence_seconds);
 }
 
+PSF* openpsf_create_with_flags(int flags, int end_silence_seconds)
+{
+	return new Psf(static_cast<PsfFlags>(flags), end_silence_seconds);
+}
+
 PSF* openpsf_create()
 {
 	return new Psf();
@@ -64,7 +69,15 @@ void openpsf_close(PSF* self)
 	return instance(self)->close();
 }
 
-size_t openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count)
+const char *openpsf_get_tag(PSF* self, const char *tag_name)
+{
+	if (self == nullptr) {
+		return nullptr;
+	}
+	return instance(self)->get_tag(tag_name);
+}
+
+int openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count)
 {
 	if (self == nullptr) {
 		return 0;

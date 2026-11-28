@@ -1,7 +1,7 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(ZLIB)
+find_dependency(ZLIB CONFIG REQUIRED PATHS "${PACKAGE_PREFIX_DIR}")
 
 include("${CMAKE_CURRENT_LIST_DIR}/openpsfTargets.cmake")
 

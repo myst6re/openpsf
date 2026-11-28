@@ -15,10 +15,25 @@
       }
     },
     {
+      "name": "release-config-64-gnu",
+      "displayName": "Release Build (x64 GNU)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "architecture": {
+        "value": "x64",
+        "strategy": "external"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
       "name": "debug-config",
       "displayName": "Debug Build",
       "generator": "Ninja",
-      "binaryDir": "${sourceDir}/build",
+      "binaryDir": "${sourceDir}/build/${presetName}",
       "architecture": {
         "value": "x86",
         "strategy": "external"

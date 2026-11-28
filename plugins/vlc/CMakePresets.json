@@ -1,0 +1,35 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "windows-mingw64",
+            "displayName": "Windows (MinGW-w64 GCC)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "windows-mingw64-debug",
+            "displayName": "Windows Debug (MinGW-w64 GCC)",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_C_COMPILER": "gcc",
+                "CMAKE_BUILD_TYPE": "Debug"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "windows-mingw64-build",
+            "configurePreset": "windows-mingw64"
+        },
+        {
+            "name": "windows-mingw64-build-debug",
+            "configurePreset": "windows-mingw64-debug"
+        }
+    ]
+}

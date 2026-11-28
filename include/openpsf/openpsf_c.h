@@ -26,15 +26,25 @@ extern "C" {
 
 	typedef void PSF;
 
+	/* Flags for openpsf_create_with_flags (same values as PsfFlags) */
+#define OPENPSF_NO_REVERB                  0x01
+#define OPENPSF_NO_SIMULATE_FREQ_RESPONSE  0x02
+#define OPENPSF_SUPPRESS_OPENING_SILENCE   0x04
+#define OPENPSF_DEBUG                      0x08
+#define OPENPSF_LEGACY_REVERB              0x20 /* original HE reverb formula */
+#define OPENPSF_LEGACY_REVERB_UPSAMPLING   0x40 /* original HE reverb upsampling */
+
 	DLLEXPORT bool openpsf_initialize_psx_core(const char* bios_path);
 	DLLEXPORT bool openpsf_is_our_path(const char* p_full_path, const char* p_extension);
 	DLLEXPORT PSF* openpsf_create();
 	DLLEXPORT PSF* openpsf_create_with_params(bool reverb, bool simulate_frequency_response, bool suppress_opening_silence,
 		int end_silence_seconds);
+	DLLEXPORT PSF* openpsf_create_with_flags(int flags, int end_silence_seconds);
 	DLLEXPORT void openpsf_destroy(PSF* self);
 	DLLEXPORT bool openpsf_open(PSF* self, const char* p_path, bool infinite);
 	DLLEXPORT void openpsf_close(PSF* self);
-	DLLEXPORT size_t openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count);
+	DLLEXPORT const char *openpsf_get_tag(PSF* self, const char *tag_name);
+	DLLEXPORT int openpsf_decode(PSF* self, int16_t* data, unsigned int sample_count);
 	DLLEXPORT bool openpsf_rewind(PSF* self);
 	DLLEXPORT int openpsf_get_sample_count(PSF* self);
 	DLLEXPORT int openpsf_get_sample_rate(PSF* self);
